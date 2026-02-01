@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitor Globalstar</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f9; padding: 20px; }
+        h1 { color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+        
+        /* Card do ESN */
+        .esn-card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            width: 100%;
+            overflow: hidden;
+            transition: box-shadow 0.3s ease;
+        }
+        
+        /* Destaque visual quando aberto */
+        .esn-card.is-open {
+            box-shadow: 0 4px 12px rgba(0,123,255,0.3);
+            border: 1px solid #007bff;
+        }
+
+        .esn-header {
+            background-color: #007bff;
+            color: white;
+            padding: 15px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none; /* Evita selecionar texto ao clicar rápido */
+        }
+        .esn-header:hover { background-color: #0056b3; }
+        
+        .esn-content {
+            display: none;
+            padding: 0;
+            max-height: 300px;
+            overflow-y: auto;
+            background-color: #fff;
+        }
+        .esn-content.active { display: block; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f8f9fa; position: sticky; top: 0; }
+        tr:hover { background-color: #f1f1f1; }
+        
+        .badge { background: #fff; color: #007bff; padding: 3px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold;}
+    </style>
+</head>
+<body>
+
+    <h1>📡 Painel Globalstar - Mensagens por ESN</h1>
+    <p style="color: #666; font-size: 0.9em;">Os cards permanecem abertos até você clicar fora deles.</p>
+    <div id="app" class="container">
+        <p>Aguardando dados...</p>
+    </div>
+
+    <script>
+        // 1. ESTADO GLOBAL: Armazena os ESNs que estão abertos no momento
+        // Usamos um Set para garantir que não haja duplicatas
+        let expandedESNs = new Set();
+
+        async function fetchData() {
+            try {
+                const response = await fetch('/api/messages');
+                const messages = await response.json();
+                renderDashboard(messages);
+            } catch (error) {
+                console.error('Erro ao buscar dados:', error);
+            }
+        }
+
+        function renderDashboard(messages) {
+            const container = document.getElementById('app');
+            
+            if (!messages || messages.length === 0) {
+                container.innerHTML = '<p>Nenhuma mensagem encontrada no banco de dados.</p>';
+                return;
+            }
+
+            const grouped = {};
+            messages.forEach(msg => {
+                if (!grouped[msg.esn]) grouped[msg.esn] = [];
+                grouped[msg.esn].push(msg);
+            });
+
+            // Limpa o container para redesenhar
+            container.innerHTML = '';
+
+            for (const [esn, msgs] of Object.entries(grouped)) {
+                const card = document.createElement('div');
+                card.className = 'esn-card';
+                card.setAttribute('data-esn', esn); // Identificador para o clique fora
+
+                // Verifica se este ESN estava aberto antes da atualização
+                const isOpen = expandedESNs.has(esn);
+                if (isOpen) {
+                    card.classList.add('is-open');
+                }
+
+                const header = document.createElement('div');
+                header.className = 'esn-header';
+                header.innerHTML = `
+                    <span>ESN: <strong>${esn}</strong></span>
+                    <span class="badge">${msgs.length} msgs</span>
+                `;
+                
+                const content = document.createElement('div');
+                content.className = 'esn-content';
+                if (isOpen) content.classList.add('active'); // Mantém aberto se estava no Set
+                
+                let tableRows = msgs.map(m => `
+                    <tr>
+                        <td>${m.received_at}</td>
+                        <td style="font-family: monospace;">${m.payload}</td>
+                    </tr>
+                `).join('');
+
+                content.innerHTML = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Data/Hora</th>
+                                <th>Payload</th>
+                            </tr>
+                        </thead>
+                        <tbody>${tableRows}</tbody>
+                    </table>
+                `;
+
+                // LOGICA DE CLIQUE NO HEADER (ABRIR/FECHAR)
+                header.addEventListener('click', (e) => {
+                    // Impede que o clique suba para o documento (para não ativar o fechar fora imediatamente)
+                    e.stopPropagation(); 
+
+                    if (content.classList.contains('active')) {
+                        // Se está aberto, fecha e remove da memória
+                        content.classList.remove('active');
+                        card.classList.remove('is-open');
+                        expandedESNs.delete(esn);
+                    } else {
+                        // Se está fechado, abre e adiciona na memória
+                        content.classList.add('active');
+                        card.classList.add('is-open');
+                        expandedESNs.add(esn);
+                    }
+                });
+
+                // Previne que cliques DENTRO do conteúdo (tabela) fechem o card
+                content.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                });
+
+                card.appendChild(header);
+                card.appendChild(content);
+                container.appendChild(card);
+            }
+        }
+
+        // 2. DETECTOR DE CLIQUE FORA (Global)
+        document.addEventListener('click', (event) => {
+            // Verifica se o clique foi fora de qualquer cartão "esn-card"
+            if (!event.target.closest('.esn-card')) {
+                
+                // Fecha visualmente todos os cards
+                document.querySelectorAll('.esn-content').forEach(el => el.classList.remove('active'));
+                document.querySelectorAll('.esn-card').forEach(el => el.classList.remove('is-open'));
+                
+                // Limpa a memória de estado
+                expandedESNs.clear();
+            }
+        });
+
+        fetchData();
+        setInterval(fetchData, 5000); // Atualiza a cada 5 segundos
+    </script>
+</body>
+</html>
