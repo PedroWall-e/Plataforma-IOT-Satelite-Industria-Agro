@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql" // Driver MySQL
+	_ "github.com/go-sql-driver/mysql"
 )
 
-// --- Estruturas XML ---
+// --- Estruturas ---
 type StuMessage struct {
 	ESN     string `xml:"esn"`
 	Payload string `xml:"payload"`
@@ -30,7 +30,7 @@ type ResponseXML struct {
 	Xmlns             string   `xml:"xmlns:xsi,attr"`
 }
 
-// --- Estrutura JSON para o Frontend ---
+// JSON para o Frontend (A estrutura de saída continua a mesma para não quebrar o front)
 type MessageDisplay struct {
 	ID         int    `json:"id"`
 	ESN        string `json:"esn"`
@@ -40,50 +40,100 @@ type MessageDisplay struct {
 
 var db *sql.DB
 
+// --- CACHE DE DISPOSITIVOS ---
+// Evita consultar a tabela 'devices' a todo momento.
+var (
+	deviceCache = make(map[string]int) // Mapa: "0-123456" -> ID 1
+	cacheMutex  sync.RWMutex           // Protege o mapa contra acesso simultâneo
+)
+
 func initDB() {
 	var err error
-	// Usuário: root, Senha: (vazio), Host: localhost, Banco: globalstar_db
 	dsn := "root:@tcp(127.0.0.1:3306)/globalstar_db?parseTime=true"
 	db, err = sql.Open("mysql", dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Configuração do Pool de Conexões do MySQL
-	db.SetMaxOpenConns(25) // Máximo de conexões abertas (deve ser >= numWorkers)
+	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	if err := db.Ping(); err != nil {
-		log.Fatal("Não foi possível conectar ao MySQL:", err)
+		log.Fatal("Erro no MySQL:", err)
 	}
 	fmt.Println("Conectado ao MySQL com sucesso!")
 }
 
-// --- WORKER: Persistência no Banco ---
+// --- FUNÇÃO AUXILIAR INTELIGENTE ---
+// Busca o ID do ESN. Se não existir, cria no banco.
+func getDeviceID(esn string) (int, error) {
+	// 1. Tenta ler do Cache (Rápido)
+	cacheMutex.RLock()
+	id, exists := deviceCache[esn]
+	cacheMutex.RUnlock()
+	if exists {
+		return id, nil
+	}
+
+	// 2. Se não está no cache, bloqueia para escrita/banco
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	// Checa novamente (double-check) pois outra goroutine pode ter criado enquanto esperávamos
+	if id, exists = deviceCache[esn]; exists {
+		return id, nil
+	}
+
+	// 3. Tenta buscar no Banco (caso tenha reiniciado o servidor)
+	err := db.QueryRow("SELECT id FROM devices WHERE esn = ?", esn).Scan(&id)
+	if err == nil {
+		deviceCache[esn] = id // Atualiza cache
+		return id, nil
+	}
+
+	// 4. Se não existe no banco, INSERE NOVO DISPOSITIVO
+	res, err := db.Exec("INSERT INTO devices (esn) VALUES (?)", esn)
+	if err != nil {
+		return 0, err
+	}
+	lid, _ := res.LastInsertId()
+	id = int(lid)
+
+	// 5. Salva no cache
+	deviceCache[esn] = id
+	return id, nil
+}
+
+// --- WORKER ---
 func worker(id int, jobs <-chan StuMessage, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	// Prepara a query uma vez para reutilizar (Performance)
-	stmt, err := db.Prepare("INSERT INTO messages(esn, payload, received_at) VALUES(?, ?, ?)")
+	// Prepara query de inserção na tabela RELACIONAL
+	stmt, err := db.Prepare("INSERT INTO messages(device_id, payload, received_at) VALUES(?, ?, ?)")
 	if err != nil {
-		log.Printf("Erro ao preparar query: %v", err)
+		log.Printf("Erro prepare: %v", err)
 		return
 	}
 	defer stmt.Close()
 
 	for msg := range jobs {
-		// Insere no banco
-		_, err := stmt.Exec(msg.ESN, msg.Payload, time.Now())
+		// Pega o ID Relacional (Pode criar o device se for novo)
+		deviceID, err := getDeviceID(msg.ESN)
 		if err != nil {
-			log.Printf("[Worker %d] Erro ao salvar ESN %s: %v", id, msg.ESN, err)
-		} else {
-			// log.Printf("[Worker %d] Salvo ESN: %s", id, msg.ESN) // Opcional: Logar sucesso
+			log.Printf("Erro ao processar ID do dispositivo %s: %v", msg.ESN, err)
+			continue
+		}
+
+		// Insere a mensagem vinculada ao ID
+		_, err = stmt.Exec(deviceID, msg.Payload, time.Now())
+		if err != nil {
+			log.Printf("Erro insert msg: %v", err)
 		}
 	}
 }
 
-// --- Handler de Recebimento XML (Listener) ---
+// --- HANDLER RECEBIMENTO XML ---
 func globalstarStreamHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -94,7 +144,6 @@ func globalstarStreamHandler(w http.ResponseWriter, r *http.Request) {
 	jobs := make(chan StuMessage, 100)
 	var wg sync.WaitGroup
 
-	// Inicia Workers
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go worker(i, jobs, &wg)
@@ -104,7 +153,6 @@ func globalstarStreamHandler(w http.ResponseWriter, r *http.Request) {
 	var incomingID, rootTag, correlationID string
 	var parseError error
 
-	// Loop de Leitura
 	for {
 		t, err := decoder.Token()
 		if err == io.EOF {
@@ -129,7 +177,7 @@ func globalstarStreamHandler(w http.ResponseWriter, r *http.Request) {
 			if se.Name.Local == "stuMessage" {
 				var msg StuMessage
 				if err := decoder.DecodeElement(&msg, &se); err == nil {
-					jobs <- msg // Envia para o banco via channel
+					jobs <- msg
 				}
 			}
 		}
@@ -138,11 +186,12 @@ func globalstarStreamHandler(w http.ResponseWriter, r *http.Request) {
 	close(jobs)
 	wg.Wait()
 
-	// Resposta XML
+	// Resposta
 	respTagName := "stuResponseMsg"
 	if rootTag == "prvmsgs" {
 		respTagName = "prvResponseMsg"
 	}
+
 	respState := "pass"
 	if parseError != nil {
 		respState = "fail"
@@ -166,10 +215,19 @@ func globalstarStreamHandler(w http.ResponseWriter, r *http.Request) {
 	xml.NewEncoder(w).Encode(respObj)
 }
 
-// --- Handler da API (Para o Frontend) ---
+// --- HANDLER API (COM JOIN) ---
 func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
-	// Busca as últimas 500 mensagens ordenadas por data
-	rows, err := db.Query("SELECT id, esn, payload, received_at FROM messages ORDER BY received_at DESC LIMIT 500")
+	// AQUI ESTÁ A MÁGICA: O JOIN
+	// Nós buscamos os dados cruzando as tabelas 'messages' e 'devices'
+	query := `
+		SELECT m.id, d.esn, m.payload, m.received_at 
+		FROM messages m
+		JOIN devices d ON m.device_id = d.id
+		ORDER BY m.received_at DESC 
+		LIMIT 500
+	`
+
+	rows, err := db.Query(query)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -179,7 +237,7 @@ func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	var messages []MessageDisplay
 	for rows.Next() {
 		var m MessageDisplay
-		var t time.Time // Variavel temporaria para formatar a data
+		var t time.Time
 		if err := rows.Scan(&m.ID, &m.ESN, &m.Payload, &t); err != nil {
 			continue
 		}
@@ -195,15 +253,9 @@ func main() {
 	initDB()
 	defer db.Close()
 
-	// Endpoint para receber o XML da Globalstar
 	http.HandleFunc("/globalstar/listener", globalstarStreamHandler)
-
-	// Endpoint para o Frontend consumir os dados
 	http.HandleFunc("/api/messages", apiMessagesHandler)
-
-	// Serve os arquivos HTML/CSS/JS da pasta "static"
-	fs := http.FileServer(http.Dir("./static"))
-	http.Handle("/", fs)
+	http.Handle("/", http.FileServer(http.Dir("./static")))
 
 	server := &http.Server{
 		Addr:         ":5000",
@@ -212,10 +264,7 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	fmt.Println("--- Servidor Full Stack Rodando na porta 5000 ---")
-	fmt.Println("-> Listener XML: http://localhost:5000/globalstar/listener")
-	fmt.Println("-> Dashboard (Frontend): http://localhost:5000/")
-
+	fmt.Println("--- Servidor Go Relacional (JOINs) Rodando na porta 5000 ---")
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
