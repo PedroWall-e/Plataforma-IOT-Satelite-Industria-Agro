@@ -3,14 +3,14 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
+
+	// IMPORTANTE: Mude 'meuprojeto' para o nome que está no seu go.mod
+	"iot_modulo1.0/pkg/globalstar"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
@@ -19,10 +19,10 @@ import (
 )
 
 // --- CONFIGURAÇÕES ---
-var jwtKey = []byte("minha_chave_secreta_super_segura") // Em produção, use variáveis de ambiente!
+var jwtKey = []byte("minha_chave_secreta_super_segura")
 var db *sql.DB
 
-// --- ESTRUTURAS ---
+// --- ESTRUTURAS AUTH/API ---
 type Credentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -45,32 +45,9 @@ type PermissionRequest struct {
 	DeviceID int `json:"device_id"`
 }
 
-// Estruturas XML
-type StuMessage struct {
-	ESN     string `xml:"esn"`
-	Payload string `xml:"payload"`
-}
-
-type ResponseXML struct {
-	XMLName           xml.Name `xml:""`
-	DeliveryTimeStamp string   `xml:"deliveryTimeStamp,attr"`
-	MessageID         string   `xml:"messageID,attr"`
-	CorrelationID     string   `xml:"correlationID,attr"`
-	State             string   `xml:"state"`
-	StateMessage      string   `xml:"stateMessage"`
-	Xmlns             string   `xml:"xmlns:xsi,attr"`
-}
-
-// --- CACHE DE DISPOSITIVOS ---
-var (
-	deviceCache = make(map[string]int)
-	cacheMutex  sync.RWMutex
-)
-
-// --- INICIALIZAÇÃO DO BANCO ---
+// --- INIT DB ---
 func initDB() {
 	var err error
-	// Ajuste a string abaixo se sua senha do root não for vazia
 	dsn := "root:@tcp(127.0.0.1:3306)/globalstar_db?parseTime=true"
 	db, err = sql.Open("mysql", dsn)
 	if err != nil {
@@ -82,69 +59,12 @@ func initDB() {
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	if err := db.Ping(); err != nil {
-		log.Fatal("ERRO CRÍTICO: MySQL não está acessível. Verifique se o XAMPP está rodando.", err)
+		log.Fatal("ERRO CRÍTICO: MySQL Offline.", err)
 	}
 	fmt.Println("Conectado ao MySQL com sucesso!")
 }
 
-// --- FUNÇÕES AUXILIARES ---
-func getDeviceID(esn string) (int, error) {
-	// 1. Busca no Cache
-	cacheMutex.RLock()
-	id, exists := deviceCache[esn]
-	cacheMutex.RUnlock()
-	if exists {
-		return id, nil
-	}
-
-	// 2. Busca ou Cria no Banco
-	cacheMutex.Lock()
-	defer cacheMutex.Unlock()
-
-	// Double check
-	if id, exists = deviceCache[esn]; exists {
-		return id, nil
-	}
-
-	err := db.QueryRow("SELECT id FROM devices WHERE esn = ?", esn).Scan(&id)
-	if err == nil {
-		deviceCache[esn] = id
-		return id, nil
-	}
-
-	res, err := db.Exec("INSERT INTO devices (esn) VALUES (?)", esn)
-	if err != nil {
-		return 0, err
-	}
-	lid, _ := res.LastInsertId()
-	id = int(lid)
-	deviceCache[esn] = id
-	return id, nil
-}
-
-// --- WORKER POOL ---
-func worker(id int, jobs <-chan StuMessage, wg *sync.WaitGroup) {
-	defer wg.Done()
-	stmt, err := db.Prepare("INSERT INTO messages(device_id, payload, received_at) VALUES(?, ?, ?)")
-	if err != nil {
-		log.Printf("Erro prepare worker: %v", err)
-		return
-	}
-	defer stmt.Close()
-
-	for msg := range jobs {
-		deviceID, err := getDeviceID(msg.ESN)
-		if err != nil {
-			log.Printf("Erro device ID: %v", err)
-			continue
-		}
-		stmt.Exec(deviceID, msg.Payload, time.Now())
-	}
-}
-
-// --- HANDLERS ---
-
-// 1. Login
+// --- HANDLERS AUTH ---
 func loginHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var creds Credentials
@@ -162,7 +82,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Usuário não encontrado", http.StatusUnauthorized)
 		} else {
 			log.Printf("ERRO BANCO: %v", err)
-			http.Error(w, "Erro de Conexão com Banco", http.StatusInternalServerError)
+			http.Error(w, "Erro de Conexão", http.StatusInternalServerError)
 		}
 		return
 	}
@@ -187,63 +107,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// 2. Recebimento de XML (Globalstar)
-func globalstarStreamHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	const numWorkers = 10
-	jobs := make(chan StuMessage, 100)
-	var wg sync.WaitGroup
-
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go worker(i, jobs, &wg)
-	}
-
-	decoder := xml.NewDecoder(r.Body)
-	var incomingID, rootTag string
-
-	for {
-		t, err := decoder.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			break
-		}
-
-		switch se := t.(type) {
-		case xml.StartElement:
-			if rootTag == "" {
-				rootTag = se.Name.Local
-				for _, attr := range se.Attr {
-					if attr.Name.Local == "messageID" {
-						incomingID = attr.Value
-					}
-				}
-			}
-			if se.Name.Local == "stuMessage" {
-				var msg StuMessage
-				if err := decoder.DecodeElement(&msg, &se); err == nil {
-					jobs <- msg
-				}
-			}
-		}
-	}
-
-	close(jobs)
-	wg.Wait()
-
-	w.Header().Set("Content-Type", "text/xml")
-	// Resposta simplificada para sucesso
-	fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?><stuResponseMsg deliveryTimeStamp="%s" messageID="%s" state="pass" stateMessage="OK" />`,
-		time.Now().UTC().Format("02/01/2006 15:04:05 GMT"), incomingID)
-}
-
-// 3. API Listar Mensagens
+// --- HANDLERS API ---
 func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
 	role := r.Header.Get("X-User-Role")
@@ -273,9 +137,7 @@ func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	// IMPORTANTE: Inicializar com make(..., 0) para retornar [] no JSON e não null
 	messages := make([]map[string]interface{}, 0)
-
 	for rows.Next() {
 		var id int
 		var esn, payload string
@@ -285,18 +147,15 @@ func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
 			"id": id, "esn": esn, "payload": payload, "received_at": t.Format("02/01/2006 15:04:05"),
 		})
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(messages)
 }
 
-// 4. API Admin
 func adminDataHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-User-Role") != "admin" {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-
 	uRows, _ := db.Query("SELECT id, username FROM users WHERE role != 'admin'")
 	defer uRows.Close()
 	users := make([]map[string]interface{}, 0)
@@ -306,7 +165,6 @@ func adminDataHandler(w http.ResponseWriter, r *http.Request) {
 		uRows.Scan(&id, &name)
 		users = append(users, map[string]interface{}{"id": id, "username": name})
 	}
-
 	dRows, _ := db.Query("SELECT id, esn FROM devices")
 	defer dRows.Close()
 	devices := make([]map[string]interface{}, 0)
@@ -316,7 +174,6 @@ func adminDataHandler(w http.ResponseWriter, r *http.Request) {
 		dRows.Scan(&id, &esn)
 		devices = append(devices, map[string]interface{}{"id": id, "esn": esn})
 	}
-
 	json.NewEncoder(w).Encode(map[string]interface{}{"users": users, "devices": devices})
 }
 
@@ -366,10 +223,16 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 func main() {
 	initDB()
-	mux := http.NewServeMux()
 
+	// --- AQUI A MÁGICA ---
+	// Iniciamos o serviço Globalstar passando a conexão do banco
+	gsService := globalstar.NewService(db)
+
+	mux := http.NewServeMux()
 	mux.HandleFunc("/login", loginHandler)
-	mux.HandleFunc("/globalstar/listener", globalstarStreamHandler)
+
+	// Usamos o método do novo pacote
+	mux.HandleFunc("/globalstar/listener", gsService.StreamHandler)
 
 	mux.HandleFunc("/api/messages", authMiddleware(apiMessagesHandler))
 	mux.HandleFunc("/api/admin/data", authMiddleware(adminDataHandler))
@@ -387,6 +250,6 @@ func main() {
 		ReadTimeout: 0, WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second,
 	}
 
-	fmt.Println("--- SERVIDOR RODANDO NA PORTA 5000 ---")
+	fmt.Println("--- SERVIDOR (Refatorado) RODANDO NA PORTA 5000 ---")
 	log.Fatal(server.ListenAndServe())
 }
