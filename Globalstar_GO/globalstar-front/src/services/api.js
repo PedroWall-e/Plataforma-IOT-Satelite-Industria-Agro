@@ -1,8 +1,10 @@
 import axios from 'axios';
 
-// Cria a instância do axios com a URL base definida no .env ou fallback para localhost
+// Cria a instância do axios com a URL base vazia.
+// Na nuvem: O Nginx redireciona para o Backend.
+// No PC local: O Vite (proxy) redirecionará para a porta 5000.
 const api = axios.create({
-  baseURL: '',
+  baseURL: '', 
 });
 
 // Interceptor: Adiciona o Token em toda requisição automaticamente
