@@ -45,7 +45,7 @@ export default function Dashboard() {
     // --- CONFIGURAÇÃO WEBSOCKET (TEMPO REAL) ---
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Em produção, a porta pode variar ou ser a mesma do frontend via proxy
-    const wsUrl = `${wsProtocol}//localhost:5000/ws`; 
+    const wsHost = window.location.host; // Pega o IP e porta atual do navegador automaticamente
     
     const socket = new WebSocket(wsUrl);
 

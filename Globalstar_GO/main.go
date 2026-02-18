@@ -506,16 +506,12 @@ func main() {
 	// CORREÇÃO DO CORS: Adicionando os IPs permitidos (Frontend)
 	// ============================================================
 	handler := cors.New(cors.Options{
-		AllowedOrigins: []string{
-			"http://localhost:5173",
-			"http://localhost:3000",
-			"http://34.9.174.67:3000", // <-- SEU IP NO GOOGLE CLOUD
-			"http://34.9.174.67",      // <-- Caso futuramente use na porta 80
-		},
+		// Permite acessos de qualquer IP (Resolve o problema de rodar local vs nuvem)
+		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS", "PUT", "DELETE"},
 		AllowedHeaders:   []string{"Authorization", "Content-Type", "Accept", "X-Requested-With"},
 		AllowCredentials: true,
-		Debug:            true, // Ativado para ajudar a identificar qualquer erro futuro nos logs do Docker
+		Debug:            false, // Pode colocar false agora para limpar os logs
 	}).Handler(mux)
 
 	port := os.Getenv("SERVER_PORT")

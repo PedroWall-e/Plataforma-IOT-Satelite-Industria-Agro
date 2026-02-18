@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Cria a instância do axios com a URL base definida no .env ou fallback para localhost
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
+  baseURL: '',
 });
 
 // Interceptor: Adiciona o Token em toda requisição automaticamente
