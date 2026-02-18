@@ -9,6 +9,7 @@ import api from './services/api';
 import MonitorTab from './components/Dashboard/MonitorTab';
 import UsersTab from './components/Dashboard/UsersTab';
 import LinksTab from './components/Dashboard/LinksTab';
+import AuditTab from './components/Dashboard/AuditTab'; // Componente de Auditoria
 import UserModal from './components/Dashboard/UserModal';
 
 export default function Dashboard() {
@@ -33,23 +34,63 @@ export default function Dashboard() {
   const currentUser = localStorage.getItem('user');
   const fullName = localStorage.getItem('full_name') || currentUser;
 
-  // --- EFEITOS (Data Fetching) ---
+  // --- EFEITOS (Data Fetching & WebSocket) ---
   useEffect(() => {
     if (!token) { navigate('/'); return; }
     
+    // Carga inicial
     fetchMessages();
-    // Polling a cada 5 segundos para novas mensagens
-    const interval = setInterval(fetchMessages, 5000);
-    
-    // Se for master, busca dados administrativos
     if (role === 'master') fetchMasterData();
 
-    return () => clearInterval(interval);
+    // --- CONFIGURAÇÃO WEBSOCKET (TEMPO REAL) ---
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Em produção, a porta pode variar ou ser a mesma do frontend via proxy
+    const wsUrl = `${wsProtocol}//localhost:5000/ws`; 
+    
+    const socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+        console.log("WebSocket Conectado ao servidor Go!");
+    };
+
+    socket.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            
+            // 1. Atualização de Nome de Dispositivo
+            if (data.type === 'DEVICE_UPDATE') {
+                setMessages(prev => prev.map(m => 
+                    m.esn === data.esn ? { ...m, device_name: data.name } : m
+                ));
+                if (role === 'master') {
+                    setMasterData(prev => ({
+                        ...prev,
+                        devices: prev.devices.map(d => 
+                            d.esn === data.esn ? { ...d, name: data.name } : d
+                        )
+                    }));
+                }
+            } 
+            // 2. Nova Mensagem de Satélite (Exemplo)
+            else if (data.esn && data.payload) { 
+                // Adiciona nova mensagem no topo
+                setMessages(prev => [data, ...prev]);
+            }
+        } catch (err) {
+            console.error("Erro ao processar mensagem WS:", err);
+        }
+    };
+
+    socket.onclose = () => console.log("WebSocket Desconectado");
+
+    // Cleanup: Fecha conexão ao sair da página
+    return () => {
+        socket.close();
+    };
   }, [token, role, navigate]);
 
   // --- FUNÇÕES DE API ---
   const fetchMessages = async () => {
-    // Evita atualizar se o usuário estiver editando um nome (para não perder o foco/input)
     if (editingDeviceESN) return; 
     try {
       const res = await api.get('/api/messages');
@@ -111,10 +152,6 @@ export default function Dashboard() {
   const saveDeviceName = async (esn) => {
       try {
         await api.post('/api/device/update', { esn, name: tempDeviceName });
-        
-        // Atualização otimista local
-        const updatedMsgs = messages.map(m => m.esn === esn ? { ...m, device_name: tempDeviceName } : m);
-        setMessages(updatedMsgs);
         setEditingDeviceESN(null);
       } catch (err) { alert("Erro ao salvar nome do dispositivo"); }
   };
@@ -125,7 +162,7 @@ export default function Dashboard() {
   };
 
   const toggleDeviceExpand = (esn) => {
-      if (editingDeviceESN === esn) return; // Não expande/contrai se estiver editando
+      if (editingDeviceESN === esn) return;
       setExpandedDevices(prev => {
           const newSet = new Set(prev);
           if (newSet.has(esn)) newSet.delete(esn);
@@ -141,13 +178,11 @@ export default function Dashboard() {
 
   // --- PROCESSAMENTO DE DADOS (MONITOR) ---
   const safeMessages = Array.isArray(messages) ? messages : [];
-  // Agrupa mensagens por ESN
   const allGroups = safeMessages.reduce((acc, msg) => {
     (acc[msg.esn] = acc[msg.esn] || []).push(msg);
     return acc;
   }, {});
 
-  // Filtra os grupos baseado na busca e na sub-aba selecionada
   const filteredGroups = Object.entries(allGroups).filter(([esn, msgs]) => {
       if (monitorSearch) {
         const term = monitorSearch.toLowerCase();
@@ -157,7 +192,6 @@ export default function Dashboard() {
                             msgs.some(m => m.payload.toLowerCase().includes(term));
         if (!matchesText) return false;
       }
-      // Aqui você pode expandir a lógica para outras abas (LoRa, WiFi) futuramente
       if (monitorSubTab === 'SATELITE-DG') return true; 
       return false; 
   });
@@ -175,16 +209,33 @@ export default function Dashboard() {
                   </div>
               </div>
               <div className="flex items-center gap-4">
-                  {role === 'master' && (
+                  {(role === 'master' || role === 'support') && (
                       <nav className="flex bg-gray-100 p-1 rounded-lg">
-                          {['monitor', 'users', 'links'].map(tab => (
-                              <button key={tab} onClick={() => { setActiveTab(tab); }} 
-                                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === tab ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-900'}`}>
-                                  {tab === 'monitor' ? 'Monitor' : tab === 'users' ? 'Usuários' : 'Vínculos'}
-                              </button>
-                          ))}
+                          <button onClick={() => setActiveTab('monitor')} 
+                              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'monitor' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-900'}`}>
+                              Monitor
+                          </button>
+                          
+                          {role === 'master' && (
+                              <>
+                                  <button onClick={() => setActiveTab('users')} 
+                                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'users' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-900'}`}>
+                                      Usuários
+                                  </button>
+                                  <button onClick={() => setActiveTab('links')} 
+                                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'links' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-900'}`}>
+                                      Vínculos
+                                  </button>
+                              </>
+                          )}
+
+                          <button onClick={() => setActiveTab('audit')} 
+                              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'audit' ? 'bg-white shadow text-purple-600' : 'text-gray-500 hover:text-gray-900'}`}>
+                              Auditoria
+                          </button>
                       </nav>
                   )}
+
                   <div className="flex items-center gap-3 pl-4 border-l">
                       <div className="text-right hidden sm:block">
                           <p className="text-sm font-bold text-gray-700">{fullName}</p>
@@ -200,8 +251,6 @@ export default function Dashboard() {
 
       {/* --- CONTEÚDO PRINCIPAL --- */}
       <div className="flex-1 max-w-7xl mx-auto w-full p-6">
-        
-        {/* Renderiza a aba ativa */}
         
         {activeTab === 'monitor' && (
             <MonitorTab 
@@ -237,6 +286,10 @@ export default function Dashboard() {
                 devices={masterData.devices}
                 onPermissionChange={handlePermission}
             />
+        )}
+
+        {activeTab === 'audit' && (role === 'master' || role === 'support') && (
+            <AuditTab />
         )}
       </div>
 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { User, Lock, Wifi, ArrowRight, Loader2 } from 'lucide-react'; // Ícones
+import { User, Lock, Wifi, ArrowRight, Loader2 } from 'lucide-react';
+import api from './services/api'; // Importando o serviço de API configurado
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -16,23 +16,27 @@ export default function Login() {
     setError('');
 
     try {
-      // Simula um delay pequeno para dar sensação de processamento (UX)
-      // await new Promise(r => setTimeout(r, 800)); 
-
-      const res = await axios.post('http://localhost:5000/login', { username, password });
+      // Usamos api.post em vez de axios.post
+      // Não precisamos passar a URL completa, apenas o endpoint '/login'
+      const res = await api.post('/login', { username, password });
       
+      // Salva os dados de sessão
       localStorage.setItem('token', res.data.token);
       localStorage.setItem('role', res.data.role);
       localStorage.setItem('user', res.data.username);
+      if (res.data.full_name) {
+          localStorage.setItem('full_name', res.data.full_name);
+      }
       
       navigate('/dashboard');
     } catch (err) {
+      // O tratamento de erro permanece similar, mas agora usamos o objeto de erro do axios
       if (err.code === "ERR_NETWORK") {
         setError('Erro de conexão com o servidor.');
       } else if (err.response?.status === 401) {
         setError('Usuário ou senha incorretos.');
       } else {
-        setError('Ocorreu um erro inesperado.');
+        setError('Ocorreu um erro inesperado. Tente novamente.');
       }
       setIsLoading(false);
     }
@@ -118,7 +122,7 @@ export default function Login() {
         <div className="mt-8 text-center relative z-10">
           <a
             href="#"
-            onClick={(e) => { e.preventDefault(); alert("Funcionalidade em desenvolvimento"); }}
+            onClick={(e) => { e.preventDefault(); alert("Entre em contato com o administrador master para redefinir sua senha."); }}
             className="text-sm text-gray-400 hover:text-blue-600 transition-colors duration-200 font-medium"
           >
             Esqueci minha senha

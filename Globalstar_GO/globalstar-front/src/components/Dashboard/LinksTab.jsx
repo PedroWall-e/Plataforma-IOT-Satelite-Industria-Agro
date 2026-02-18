@@ -15,7 +15,7 @@ export default function LinksTab({ users, devices, onPermissionChange }) {
         (u.full_name && u.full_name.toLowerCase().includes(userSearch.toLowerCase()))
     );
 
-    // Filtra e ordena dispositivos (os que o usuário já tem acesso aparecem primeiro)
+    // Filtra e ordena dispositivos
     const getSortedDevices = () => {
         if (!selectedUser) return [];
         
@@ -23,9 +23,16 @@ export default function LinksTab({ users, devices, onPermissionChange }) {
             .filter(d => d.esn.toLowerCase().includes(deviceSearch.toLowerCase()) || 
                          (d.name && d.name.toLowerCase().includes(deviceSearch.toLowerCase())))
             .sort((a, b) => {
-                const hasA = a.users.includes(selectedUser.username);
-                const hasB = b.users.includes(selectedUser.username);
-                return (hasA ===XB) ? 0 : hasA ? -1 : 1;
+                // Verifica se o usuário tem acesso (para colocar os marcados no topo)
+                // Garante que users seja um array para evitar erro se vier null do backend
+                const usersA = Array.isArray(a.users) ? a.users : [];
+                const usersB = Array.isArray(b.users) ? b.users : [];
+
+                const hasA = usersA.includes(selectedUser.username);
+                const hasB = usersB.includes(selectedUser.username);
+                
+                // Ordenação: Quem tem acesso vem primeiro (-1), quem não tem vem depois (1)
+                return (hasA === hasB) ? 0 : hasA ? -1 : 1;
             });
     };
 
@@ -51,7 +58,7 @@ export default function LinksTab({ users, devices, onPermissionChange }) {
                         <button 
                             key={u.id}
                             onClick={() => setSelectedUser(u)}
-                            className={`w-full text-left p-3 rounded-lg text-sm flex justify-between items-center transition ${selectedUser?.id === u.id ? 'bg-blue-50 border-blue-200yb border text-blue-700' : 'hover:bg-gray-50 text-gray-700'}`}
+                            className={`w-full text-left p-3 rounded-lg text-sm flex justify-between items-center transition ${selectedUser?.id === u.id ? 'bg-blue-50 border border-blue-200 text-blue-700' : 'hover:bg-gray-50 text-gray-700'}`}
                         >
                             <div>
                                 <div className="font-bold">{u.full_name || u.username}</div>
@@ -93,7 +100,10 @@ export default function LinksTab({ users, devices, onPermissionChange }) {
                         <div className="flex-1 overflow-y-auto p-4">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 {getSortedDevices().map(dev => {
-                                    const hasAccess = dev.users.includes(selectedUser.username);
+                                    // Verificação de segurança para array de users
+                                    const devUsers = Array.isArray(dev.users) ? dev.users : [];
+                                    const hasAccess = devUsers.includes(selectedUser.username);
+                                    
                                     return (
                                         <div key={dev.id} 
                                             onClick={() => onPermissionChange(selectedUser.id, dev.id, hasAccess ? 'revoke' : 'grant')}
@@ -122,6 +132,11 @@ export default function LinksTab({ users, devices, onPermissionChange }) {
                                         </div>
                                     )
                                 })}
+                                {getSortedDevices().length === 0 && (
+                                    <div className="col-span-2 text-center py-10 text-gray-400">
+                                        Nenhum dispositivo encontrado.
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </>

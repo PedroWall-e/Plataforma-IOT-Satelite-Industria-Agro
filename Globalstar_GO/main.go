@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,15 +15,24 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/joho/godotenv"
+	"github.com/gorilla/websocket" // Importante: go get github.com/gorilla/websocket
+	"github.com/joho/godotenv"     // Importante: go get github.com/joho/godotenv
 	"github.com/rs/cors"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// --- CONFIGURAÇÕES ---
-// A chave agora é iniciada vazia e preenchida no main()
+// --- CONFIGURAÇÕES GLOBAIS ---
 var jwtKey []byte
 var db *sql.DB
+
+// --- CONFIGURAÇÕES WEBSOCKET ---
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// Canal para broadcast de mensagens (usado pelo pacote globalstar e handlers)
+var broadcast = make(chan interface{})
+var clients = make(map[*websocket.Conn]bool)
 
 // --- ESTRUTURAS ---
 type Credentials struct {
@@ -60,9 +70,34 @@ type DeviceUpdate struct {
 	Name string `json:"name"`
 }
 
-// --- INICIALIZAÇÃO DO BANCO ---
+// Estrutura para Logs de Auditoria
+type AuditLog struct {
+	ID        int    `json:"id"`
+	Username  string `json:"username"`
+	Action    string `json:"action"`
+	Details   string `json:"details"`
+	IP        string `json:"ip_address"`
+	CreatedAt string `json:"created_at"`
+}
+
+// --- FUNÇÕES AUXILIARES ---
+
+// createAuditLog: Grava logs de segurança no banco de dados
+func createAuditLog(userID int, username, action, details, ip string) {
+	log.Printf("[AUDIT] User: %s | Action: %s | Det: %s", username, action, details)
+
+	go func() {
+		// Tenta gravar no banco (assume que userID pode ser 0 ou NULL dependendo do schema)
+		// Certifique-se que a tabela audit_logs foi criada
+		_, err := db.Exec("INSERT INTO audit_logs (user_id, username, action, details, ip_address) VALUES (?, ?, ?, ?, ?)",
+			userID, username, action, details, ip)
+		if err != nil {
+			log.Printf("ERRO CRÍTICO AO GRAVAR LOG: %v", err)
+		}
+	}()
+}
+
 func initDB() {
-	// Carrega variáveis do .env (se disponível)
 	_ = godotenv.Load()
 
 	dbUser := os.Getenv("DB_USER")
@@ -71,25 +106,64 @@ func initDB() {
 	dbPort := os.Getenv("DB_PORT")
 	dbName := os.Getenv("DB_NAME")
 
-	// Monta a string de conexão (DSN) usando as variáveis de ambiente
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
 		dbUser, dbPass, dbHost, dbPort, dbName)
 
 	var err error
 	db, err = sql.Open("mysql", dsn)
 	if err != nil {
-		log.Fatal("Erro ao abrir driver MySQL:", err)
+		log.Fatal("Erro driver MySQL:", err)
 	}
-
 	db.SetMaxOpenConns(25)
 
 	if err := db.Ping(); err != nil {
-		log.Fatal("MySQL Offline ou credenciais inválidas:", err)
+		log.Fatal("MySQL Offline:", err)
 	}
-	fmt.Println("Conectado ao MySQL com sucesso!")
+	fmt.Println("Conectado ao MySQL!")
 }
 
-// --- HANDLERS AUTH ---
+// --- WEBSOCKET HANDLERS ---
+
+// handleConnections: Gerencia novas conexões WebSocket
+func handleConnections(w http.ResponseWriter, r *http.Request) {
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("Erro WS Upgrade: %v", err)
+		return
+	}
+	defer ws.Close()
+
+	clients[ws] = true
+
+	// Loop para manter conexão ativa
+	for {
+		var msg map[string]interface{}
+		// Lê mensagens do cliente (ping/pong ou comandos)
+		err := ws.ReadJSON(&msg)
+		if err != nil {
+			delete(clients, ws)
+			break
+		}
+	}
+}
+
+// handleMessages: Goroutine que distribui mensagens para todos os clientes conectados
+func handleMessages() {
+	for {
+		msg := <-broadcast
+		for client := range clients {
+			err := client.WriteJSON(msg)
+			if err != nil {
+				log.Printf("Erro WS Write: %v", err)
+				client.Close()
+				delete(clients, client)
+			}
+		}
+	}
+}
+
+// --- API HANDLERS ---
+
 func loginHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var creds Credentials
@@ -100,14 +174,18 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := db.QueryRow("SELECT id, password_hash, role, full_name FROM users WHERE username = ?", creds.Username).Scan(&userID, &storedHash, &role, &fullName)
 	if err != nil {
+		// Log opcional para falhas
 		http.Error(w, "Credenciais inválidas", http.StatusUnauthorized)
 		return
 	}
 
 	if err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(creds.Password)); err != nil {
+		createAuditLog(userID, creds.Username, "LOGIN_FAILED", "Senha incorreta", r.RemoteAddr)
 		http.Error(w, "Credenciais inválidas", http.StatusUnauthorized)
 		return
 	}
+
+	createAuditLog(userID, creds.Username, "LOGIN", "Login realizado com sucesso", r.RemoteAddr)
 
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
@@ -124,7 +202,6 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- HANDLERS MENSAGENS ---
 func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
 	role := r.Header.Get("X-User-Role")
@@ -202,7 +279,33 @@ func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(messages)
 }
 
-// --- HANDLER UPDATE DEVICE NAME ---
+// apiAuditLogsHandler: Retorna os logs para o frontend
+func apiAuditLogsHandler(w http.ResponseWriter, r *http.Request) {
+	role := r.Header.Get("X-User-Role")
+	if role != "master" && role != "support" {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	rows, err := db.Query("SELECT id, username, action, details, ip_address, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 100")
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	defer rows.Close()
+
+	logs := make([]AuditLog, 0)
+	for rows.Next() {
+		var l AuditLog
+		var t time.Time
+		rows.Scan(&l.ID, &l.Username, &l.Action, &l.Details, &l.IP, &t)
+		l.CreatedAt = t.Format("02/01/2006 15:04:05")
+		logs = append(logs, l)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
+}
+
 func updateDeviceNameHandler(w http.ResponseWriter, r *http.Request) {
 	var d DeviceUpdate
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
@@ -215,10 +318,21 @@ func updateDeviceNameHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Erro ao atualizar nome", 500)
 		return
 	}
+
+	// 1. Auditoria
+	userID, _ := strconv.Atoi(r.Header.Get("X-User-ID"))
+	createAuditLog(userID, "User:"+r.Header.Get("X-User-ID"), "UPDATE_DEVICE", fmt.Sprintf("ESN %s renomeado para %s", d.ESN, d.Name), r.RemoteAddr)
+
+	// 2. Broadcast WebSocket
+	broadcast <- map[string]string{
+		"type": "DEVICE_UPDATE",
+		"esn":  d.ESN,
+		"name": d.Name,
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
-// --- HANDLERS MASTER ---
 func masterDataHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-User-Role") != "master" {
 		http.Error(w, "Forbidden", http.StatusForbidden)
@@ -271,7 +385,13 @@ func upsertUserHandler(w http.ResponseWriter, r *http.Request) {
 	var u UserData
 	json.NewDecoder(r.Body).Decode(&u)
 
+	actorID, _ := strconv.Atoi(r.Header.Get("X-User-ID"))
+	actionType := "CREATE_USER"
+	details := fmt.Sprintf("Criou usuário %s", u.Username)
+
 	if u.ID > 0 {
+		actionType = "UPDATE_USER"
+		details = fmt.Sprintf("Atualizou usuário ID %d (%s)", u.ID, u.Username)
 		if u.Password != "" {
 			hash, _ := bcrypt.GenerateFromPassword([]byte(u.Password), 14)
 			db.Exec(`UPDATE users SET username=?, password_hash=?, role=?, full_name=?, email=?, phone=?, address=?, city=?, state=? WHERE id=?`,
@@ -285,6 +405,8 @@ func upsertUserHandler(w http.ResponseWriter, r *http.Request) {
 		db.Exec(`INSERT INTO users (username, password_hash, role, full_name, email, phone, address, city, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			u.Username, hash, u.Role, u.FullName, u.Email, u.Phone, u.Address, u.City, u.State)
 	}
+
+	createAuditLog(actorID, "Master", actionType, details, r.RemoteAddr)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -296,6 +418,10 @@ func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
 	var u UserData
 	json.NewDecoder(r.Body).Decode(&u)
 	db.Exec("DELETE FROM users WHERE id = ?", u.ID)
+
+	actorID, _ := strconv.Atoi(r.Header.Get("X-User-ID"))
+	createAuditLog(actorID, "Master", "DELETE_USER", fmt.Sprintf("Deletou usuário ID %d", u.ID), r.RemoteAddr)
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -312,10 +438,13 @@ func permissionHandler(w http.ResponseWriter, r *http.Request) {
 	} else if p.Action == "revoke" {
 		db.Exec("DELETE FROM user_permissions WHERE user_id = ? AND device_id = ?", p.UserID, p.DeviceID)
 	}
+
+	actorID, _ := strconv.Atoi(r.Header.Get("X-User-ID"))
+	createAuditLog(actorID, "Master", "PERMISSION_CHANGE", fmt.Sprintf("%s device %d para user %d", p.Action, p.DeviceID, p.UserID), r.RemoteAddr)
+
 	w.WriteHeader(http.StatusOK)
 }
 
-// --- MIDDLEWARE ---
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := r.Header.Get("Authorization")
@@ -336,57 +465,63 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// --- MAIN ---
 func main() {
-	// Carrega .env
 	err := godotenv.Load()
 	if err != nil {
-		log.Println("Aviso: Arquivo .env não encontrado, a usar variáveis de ambiente do sistema.")
+		log.Println("Aviso: .env não encontrado, usando variáveis de ambiente.")
 	}
 
-	// Define a chave JWT via variável de ambiente
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
-		log.Fatal("ERRO CRÍTICO: JWT_SECRET não configurado no ambiente.")
+		log.Fatal("ERRO: JWT_SECRET obrigatório.")
 	}
 	jwtKey = []byte(jwtSecret)
 
-	// Inicializa a base de dados
 	initDB()
 
-	gsService := globalstar.NewService(db)
+	// Inicia o "carteiro" do WebSocket em background
+	go handleMessages()
+
+	// Serviço para processar XML da Globalstar (AGORA RECEBE O BROADCAST)
+	gsService := globalstar.NewService(db, broadcast)
+
 	mux := http.NewServeMux()
 
+	// Rotas
 	mux.HandleFunc("/login", loginHandler)
 	mux.HandleFunc("/globalstar/listener", gsService.StreamHandler)
+	mux.HandleFunc("/ws", handleConnections) // Endpoint WebSocket
 
+	// API Protegida
 	mux.HandleFunc("/api/messages", authMiddleware(apiMessagesHandler))
 	mux.HandleFunc("/api/device/update", authMiddleware(updateDeviceNameHandler))
+	mux.HandleFunc("/api/audit", authMiddleware(apiAuditLogsHandler))
 
+	// Master
 	mux.HandleFunc("/api/master/data", authMiddleware(masterDataHandler))
 	mux.HandleFunc("/api/master/user", authMiddleware(upsertUserHandler))
 	mux.HandleFunc("/api/master/user/delete", authMiddleware(deleteUserHandler))
 	mux.HandleFunc("/api/master/permission", authMiddleware(permissionHandler))
 
 	handler := cors.New(cors.Options{
-		AllowedOrigins: []string{"http://localhost:5173", "http://localhost:3000"},
-		AllowedMethods: []string{"GET", "POST", "OPTIONS", "PUT", "DELETE"},
-		AllowedHeaders: []string{"Authorization", "Content-Type"},
+		AllowedOrigins:   []string{"http://localhost:5173", "http://localhost:3000"},
+		AllowedMethods:   []string{"GET", "POST", "OPTIONS", "PUT", "DELETE"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type"},
+		AllowCredentials: true,
 	}).Handler(mux)
 
-	// Porta configurável via ambiente
 	port := os.Getenv("SERVER_PORT")
 	if port == "" {
-		port = ":5000" // Fallback seguro
+		port = ":5000"
 	}
 
 	server := &http.Server{
 		Addr:         port,
 		Handler:      handler,
-		ReadTimeout:  0,
+		ReadTimeout:  0, // Necessário para WS e Streaming
 		WriteTimeout: 30 * time.Second,
 	}
 
-	fmt.Printf("--- SERVIDOR V3 (COM SEGURANÇA DE AMBIENTE) A CORRER EM %s ---\n", port)
+	fmt.Printf("--- SERVIDOR (WS + AUDIT) A CORRER NA PORTA %s ---\n", port)
 	log.Fatal(server.ListenAndServe())
 }

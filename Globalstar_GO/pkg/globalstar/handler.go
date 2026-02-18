@@ -28,24 +28,26 @@ type ResponseXML struct {
 }
 
 // --- SERVIÇO GLOBALSTAR ---
-// Essa estrutura guarda tudo que o Globalstar precisa para funcionar
 type Service struct {
 	DB          *sql.DB
 	DeviceCache map[string]int
 	CacheMutex  sync.RWMutex
+	// NOVO: Canal para enviar atualizações em tempo real (apenas escrita)
+	Broadcast chan<- interface{}
 }
 
-// Construtor: Cria uma nova instância do serviço
-func NewService(db *sql.DB) *Service {
+// Construtor: Cria uma nova instância do serviço (agora recebe o broadcast)
+func NewService(db *sql.DB, broadcast chan<- interface{}) *Service {
 	return &Service{
 		DB:          db,
 		DeviceCache: make(map[string]int),
+		Broadcast:   broadcast,
 	}
 }
 
 // --- MÉTODOS DO SERVIÇO ---
 
-// 1. GetDeviceID (Agora é um método de Service)
+// 1. GetDeviceID
 func (s *Service) getDeviceID(esn string) (int, error) {
 	s.CacheMutex.RLock()
 	id, exists := s.DeviceCache[esn]
@@ -80,7 +82,7 @@ func (s *Service) getDeviceID(esn string) (int, error) {
 	return id, nil
 }
 
-// 2. Worker (Método privado)
+// 2. Worker (Processamento e Envio WebSocket)
 func (s *Service) worker(id int, jobs <-chan StuMessage, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -98,8 +100,34 @@ func (s *Service) worker(id int, jobs <-chan StuMessage, wg *sync.WaitGroup) {
 			log.Printf("Erro device ID: %v", err)
 			continue
 		}
-		// Executa a inserção
-		stmt.Exec(deviceID, msg.Payload, time.Now())
+
+		// 1. Executa a inserção no banco
+		now := time.Now()
+		_, err = stmt.Exec(deviceID, msg.Payload, now)
+		if err != nil {
+			log.Printf("Erro ao salvar mensagem: %v", err)
+			continue
+		}
+
+		// 2. Envia para o WebSocket (Tempo Real) se o canal estiver disponível
+		if s.Broadcast != nil {
+			// Cria o objeto JSON que o frontend espera
+			updateMsg := map[string]interface{}{
+				"type":        "NEW_MESSAGE", // Identificador opcional
+				"id":          0,             // ID omitido ou temporário
+				"esn":         msg.ESN,
+				"payload":     msg.Payload,
+				"received_at": now.Format("02/01/2006 15:04:05"),
+				"device_id":   deviceID,
+			}
+
+			// Envia sem bloquear (select default evita travar se ninguém estiver a ouvir)
+			select {
+			case s.Broadcast <- updateMsg:
+			default:
+				// Canal cheio ou bloqueado, descarta para não afetar a receção do satélite
+			}
+		}
 	}
 }
 
