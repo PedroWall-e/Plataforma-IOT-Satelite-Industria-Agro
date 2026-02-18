@@ -15,8 +15,8 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/gorilla/websocket" // Importante: go get github.com/gorilla/websocket
-	"github.com/joho/godotenv"     // Importante: go get github.com/joho/godotenv
+	"github.com/gorilla/websocket"
+	"github.com/joho/godotenv"
 	"github.com/rs/cors"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -27,6 +27,7 @@ var db *sql.DB
 
 // --- CONFIGURAÇÕES WEBSOCKET ---
 var upgrader = websocket.Upgrader{
+	// Isso garante que o WebSocket funcione vindo de qualquer IP
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
@@ -88,7 +89,6 @@ func createAuditLog(userID int, username, action, details, ip string) {
 
 	go func() {
 		// Tenta gravar no banco (assume que userID pode ser 0 ou NULL dependendo do schema)
-		// Certifique-se que a tabela audit_logs foi criada
 		_, err := db.Exec("INSERT INTO audit_logs (user_id, username, action, details, ip_address) VALUES (?, ?, ?, ?, ?)",
 			userID, username, action, details, ip)
 		if err != nil {
@@ -174,7 +174,6 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := db.QueryRow("SELECT id, password_hash, role, full_name FROM users WHERE username = ?", creds.Username).Scan(&userID, &storedHash, &role, &fullName)
 	if err != nil {
-		// Log opcional para falhas
 		http.Error(w, "Credenciais inválidas", http.StatusUnauthorized)
 		return
 	}
@@ -503,11 +502,20 @@ func main() {
 	mux.HandleFunc("/api/master/user/delete", authMiddleware(deleteUserHandler))
 	mux.HandleFunc("/api/master/permission", authMiddleware(permissionHandler))
 
+	// ============================================================
+	// CORREÇÃO DO CORS: Adicionando os IPs permitidos (Frontend)
+	// ============================================================
 	handler := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:5173", "http://localhost:3000"},
+		AllowedOrigins: []string{
+			"http://localhost:5173",
+			"http://localhost:3000",
+			"http://34.9.174.67:3000", // <-- SEU IP NO GOOGLE CLOUD
+			"http://34.9.174.67",      // <-- Caso futuramente use na porta 80
+		},
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS", "PUT", "DELETE"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "Accept", "X-Requested-With"},
 		AllowCredentials: true,
+		Debug:            true, // Ativado para ajudar a identificar qualquer erro futuro nos logs do Docker
 	}).Handler(mux)
 
 	port := os.Getenv("SERVER_PORT")
