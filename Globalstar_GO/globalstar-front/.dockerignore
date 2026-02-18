@@ -1,0 +1,24 @@
+# Dependências locais (O Docker deve baixar as dele)
+node_modules
+.npm
+npm-debug.log
+
+# Artefatos de Build locais
+dist
+build
+
+# Configurações de IDE
+.vscode
+.idea
+.DS_Store
+
+# Variáveis de ambiente locais (Para não vazar segredos do seu PC)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs
+*.log

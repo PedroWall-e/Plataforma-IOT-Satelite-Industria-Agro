@@ -1,0 +1,19 @@
+# Binários compilados do Go
+api-server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Pasta de dados do Docker (se você rodar o docker-compose na mesma pasta)
+mysql_data
+sonar_data
+sonar_logs
+
+# Variáveis de ambiente
+.env
+
+# Logs de erro e debug
+*.log
+vendor/
