@@ -6,7 +6,8 @@ services:
     container_name: globalstar-backend
     restart: always
     ports:
-      - "5000:5000"
+      - "5000:5000" # Porta da API
+      - "5001:5001" # (Opcional) Porta extra se precisar de debug
     environment:
       - SERVER_PORT=:5000
       - DB_HOST=db
@@ -14,7 +15,7 @@ services:
       - DB_USER=root
       - DB_PASS=rootpassword
       - DB_NAME=globalstar_db
-      - JWT_SECRET=sua_chave_secreta_docker
+      - JWT_SECRET=sua_chave_secreta_docker_super_segura
     depends_on:
       - db
     networks:
@@ -24,12 +25,14 @@ services:
     build:
       context: ./globalstar-front
       args:
-        # Aponta para o backend (acessível pelo browser, então usa localhost ou IP público)
+        # URL que o navegador usará para acessar a API
         - VITE_API_URL=http://localhost:5000
+        # URL para o WebSocket (se usar env no front)
+        - VITE_WS_URL=ws://localhost:5000/ws
     container_name: globalstar-frontend
     restart: always
     ports:
-      - "3000:80" # Acessar no navegador via http://localhost:3000
+      - "3000:80" # Acesso no navegador: http://localhost:3000
     depends_on:
       - backend
     networks:
@@ -43,11 +46,11 @@ services:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: globalstar_db
     ports:
-      - "3306:3306"
+      - "3306:3306" # Se der erro de porta em uso, mude para "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      # Script opcional para criar tabelas ao iniciar (se tiver um init.sql)
-      # - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      # Script que cria as tabelas na primeira execução
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - globalstar-net
 
@@ -58,7 +61,7 @@ services:
     container_name: sonarqube
     restart: always
     ports:
-      - "9000:9000"
+      - "9000:9000" # Acesso: http://localhost:9000 (admin/admin)
     environment:
       - SONAR_JDBC_URL=jdbc:postgresql://db-sonar:5432/sonar
       - SONAR_JDBC_USERNAME=sonar
@@ -84,23 +87,6 @@ services:
       - sonar_db_data:/var/lib/postgresql/data
     networks:
       - globalstar-net
-
-  # Sonar Scanner (Opcional: Roda a análise automaticamente ao subir)
-  # Normalmente você roda isso na pipeline de CI/CD (GitHub Actions/Jenkins)
-  # sonar-scanner-cli:
-  #   image: sonarsource/sonar-scanner-cli
-  #   depends_on:
-  #     - sonarqube
-  #     - backend
-  #   volumes:
-  #     - .:/usr/src
-  #   command: >
-  #     sonar-scanner 
-  #     -Dsonar.projectKey=globalstar-iot 
-  #     -Dsonar.sources=. 
-  #     -Dsonar.host.url=http://sonarqube:9000 
-  #     -Dsonar.login=admin 
-  #     -Dsonar.password=admin
 
 volumes:
   mysql_data:
