@@ -6,19 +6,22 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
-	"iot_modulo1.0/pkg/globalstar" // Mantenha seu import correto aqui
+	"iot_modulo1.0/pkg/globalstar"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
 	"github.com/rs/cors"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // --- CONFIGURAÇÕES ---
-var jwtKey = []byte("minha_chave_secreta_super_segura")
+// A chave agora é iniciada vazia e preenchida no main()
+var jwtKey []byte
 var db *sql.DB
 
 // --- ESTRUTURAS ---
@@ -52,24 +55,38 @@ type PermissionRequest struct {
 	Action   string `json:"action"`
 }
 
-// NOVO: Estrutura para atualizar o nome do device
 type DeviceUpdate struct {
 	ESN  string `json:"esn"`
 	Name string `json:"name"`
 }
 
+// --- INICIALIZAÇÃO DO BANCO ---
 func initDB() {
+	// Carrega variáveis do .env (se disponível)
+	_ = godotenv.Load()
+
+	dbUser := os.Getenv("DB_USER")
+	dbPass := os.Getenv("DB_PASS")
+	dbHost := os.Getenv("DB_HOST")
+	dbPort := os.Getenv("DB_PORT")
+	dbName := os.Getenv("DB_NAME")
+
+	// Monta a string de conexão (DSN) usando as variáveis de ambiente
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
+		dbUser, dbPass, dbHost, dbPort, dbName)
+
 	var err error
-	dsn := "root:@tcp(127.0.0.1:3306)/globalstar_db?parseTime=true"
 	db, err = sql.Open("mysql", dsn)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Erro ao abrir driver MySQL:", err)
 	}
+
 	db.SetMaxOpenConns(25)
+
 	if err := db.Ping(); err != nil {
-		log.Fatal("MySQL Offline", err)
+		log.Fatal("MySQL Offline ou credenciais inválidas:", err)
 	}
-	fmt.Println("Conectado ao MySQL!")
+	fmt.Println("Conectado ao MySQL com sucesso!")
 }
 
 // --- HANDLERS AUTH ---
@@ -116,7 +133,6 @@ func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	var rows *sql.Rows
 	var err error
 
-	// ATUALIZADO: Agora buscamos também o 'd.name'
 	if role == "master" {
 		query = `SELECT m.id, d.esn, d.name, m.payload, m.received_at, d.id 
 		         FROM messages m JOIN devices d ON m.device_id = d.id 
@@ -141,7 +157,7 @@ func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	type MsgResponse struct {
 		ID         int      `json:"id"`
 		ESN        string   `json:"esn"`
-		DeviceName string   `json:"device_name"` // NOVO CAMPO
+		DeviceName string   `json:"device_name"`
 		Payload    string   `json:"payload"`
 		ReceivedAt string   `json:"received_at"`
 		DeviceID   int      `json:"-"`
@@ -153,14 +169,12 @@ func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var m MsgResponse
 		var t time.Time
-		// Scan atualizado com d.name
 		rows.Scan(&m.ID, &m.ESN, &m.DeviceName, &m.Payload, &t, &m.DeviceID)
 		m.ReceivedAt = t.Format("02/01/2006 15:04:05")
 		m.SharedWith = []string{}
 		messages = append(messages, m)
 	}
 
-	// Lógica de Compartilhamento (igual ao anterior)
 	if len(messages) > 0 && role != "master" {
 		for i := range messages {
 			devID := messages[i].DeviceID
@@ -188,9 +202,8 @@ func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(messages)
 }
 
-// --- NOVO: Handler para Atualizar Nome do Dispositivo ---
+// --- HANDLER UPDATE DEVICE NAME ---
 func updateDeviceNameHandler(w http.ResponseWriter, r *http.Request) {
-	// Qualquer usuário logado pode alterar o nome (conforme pedido)
 	var d DeviceUpdate
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
 		http.Error(w, "JSON inválido", 400)
@@ -221,12 +234,11 @@ func masterDataHandler(w http.ResponseWriter, r *http.Request) {
 		users = append(users, u)
 	}
 
-	// ATUALIZADO: Buscar também o nome no painel master
 	dRows, _ := db.Query("SELECT id, esn, name FROM devices")
 	type DeviceData struct {
 		ID    int      `json:"id"`
 		ESN   string   `json:"esn"`
-		Name  string   `json:"name"` // NOVO
+		Name  string   `json:"name"`
 		Users []string `json:"users"`
 	}
 	devices := make([]DeviceData, 0)
@@ -303,6 +315,7 @@ func permissionHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// --- MIDDLEWARE ---
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := r.Header.Get("Authorization")
@@ -323,8 +336,24 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// --- MAIN ---
 func main() {
+	// Carrega .env
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("Aviso: Arquivo .env não encontrado, a usar variáveis de ambiente do sistema.")
+	}
+
+	// Define a chave JWT via variável de ambiente
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("ERRO CRÍTICO: JWT_SECRET não configurado no ambiente.")
+	}
+	jwtKey = []byte(jwtSecret)
+
+	// Inicializa a base de dados
 	initDB()
+
 	gsService := globalstar.NewService(db)
 	mux := http.NewServeMux()
 
@@ -332,8 +361,6 @@ func main() {
 	mux.HandleFunc("/globalstar/listener", gsService.StreamHandler)
 
 	mux.HandleFunc("/api/messages", authMiddleware(apiMessagesHandler))
-
-	// NOVA ROTA PARA RENOMEAR
 	mux.HandleFunc("/api/device/update", authMiddleware(updateDeviceNameHandler))
 
 	mux.HandleFunc("/api/master/data", authMiddleware(masterDataHandler))
@@ -347,7 +374,19 @@ func main() {
 		AllowedHeaders: []string{"Authorization", "Content-Type"},
 	}).Handler(mux)
 
-	server := &http.Server{Addr: ":5000", Handler: handler, ReadTimeout: 0, WriteTimeout: 30 * time.Second}
-	fmt.Println("--- SERVIDOR V3 (COM NOMES PERSONALIZADOS) ---")
+	// Porta configurável via ambiente
+	port := os.Getenv("SERVER_PORT")
+	if port == "" {
+		port = ":5000" // Fallback seguro
+	}
+
+	server := &http.Server{
+		Addr:         port,
+		Handler:      handler,
+		ReadTimeout:  0,
+		WriteTimeout: 30 * time.Second,
+	}
+
+	fmt.Printf("--- SERVIDOR V3 (COM SEGURANÇA DE AMBIENTE) A CORRER EM %s ---\n", port)
 	log.Fatal(server.ListenAndServe())
 }
