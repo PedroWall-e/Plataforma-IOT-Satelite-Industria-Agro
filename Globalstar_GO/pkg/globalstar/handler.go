@@ -17,26 +17,16 @@ type StuMessage struct {
 	Payload string `xml:"payload"`
 }
 
-type ResponseXML struct {
-	XMLName           xml.Name `xml:""`
-	DeliveryTimeStamp string   `xml:"deliveryTimeStamp,attr"`
-	MessageID         string   `xml:"messageID,attr"`
-	CorrelationID     string   `xml:"correlationID,attr"`
-	State             string   `xml:"state"`
-	StateMessage      string   `xml:"stateMessage"`
-	Xmlns             string   `xml:"xmlns:xsi,attr"`
-}
-
 // --- SERVIÇO GLOBALSTAR ---
 type Service struct {
 	DB          *sql.DB
 	DeviceCache map[string]int
 	CacheMutex  sync.RWMutex
-	// NOVO: Canal para enviar atualizações em tempo real (apenas escrita)
+	// Canal para enviar atualizações em tempo real (apenas escrita)
 	Broadcast chan<- interface{}
 }
 
-// Construtor: Cria uma nova instância do serviço (agora recebe o broadcast)
+// Construtor: Cria uma nova instância do serviço
 func NewService(db *sql.DB, broadcast chan<- interface{}) *Service {
 	return &Service{
 		DB:          db,
@@ -111,27 +101,25 @@ func (s *Service) worker(id int, jobs <-chan StuMessage, wg *sync.WaitGroup) {
 
 		// 2. Envia para o WebSocket (Tempo Real) se o canal estiver disponível
 		if s.Broadcast != nil {
-			// Cria o objeto JSON que o frontend espera
 			updateMsg := map[string]interface{}{
-				"type":        "NEW_MESSAGE", // Identificador opcional
-				"id":          0,             // ID omitido ou temporário
+				"type":        "NEW_MESSAGE",
+				"id":          0,
 				"esn":         msg.ESN,
 				"payload":     msg.Payload,
 				"received_at": now.Format("02/01/2006 15:04:05"),
 				"device_id":   deviceID,
 			}
 
-			// Envia sem bloquear (select default evita travar se ninguém estiver a ouvir)
+			// Envia sem bloquear
 			select {
 			case s.Broadcast <- updateMsg:
 			default:
-				// Canal cheio ou bloqueado, descarta para não afetar a receção do satélite
 			}
 		}
 	}
 }
 
-// 3. Handler HTTP (Público)
+// 3. Handler HTTP (Público) - Recebe requisições da Globalstar
 func (s *Service) StreamHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -151,7 +139,7 @@ func (s *Service) StreamHandler(w http.ResponseWriter, r *http.Request) {
 	decoder := xml.NewDecoder(r.Body)
 	var incomingID, rootTag string
 
-	// Loop de Leitura XML
+	// Loop de Leitura XML (Streaming leve para a memória)
 	for {
 		t, err := decoder.Token()
 		if err == io.EOF {
@@ -165,6 +153,7 @@ func (s *Service) StreamHandler(w http.ResponseWriter, r *http.Request) {
 		case xml.StartElement:
 			if rootTag == "" {
 				rootTag = se.Name.Local
+				// Extrai o ID da mensagem para responder depois
 				for _, attr := range se.Attr {
 					if attr.Name.Local == "messageID" {
 						incomingID = attr.Value
@@ -183,8 +172,24 @@ func (s *Service) StreamHandler(w http.ResponseWriter, r *http.Request) {
 	close(jobs)
 	wg.Wait()
 
-	// Resposta
+	// =========================================================================
+	// RESPOSTA FORMATADA EXATAMENTE COMO A GLOBALSTAR EXIGE
+	// =========================================================================
 	w.Header().Set("Content-Type", "text/xml")
-	fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?><stuResponseMsg deliveryTimeStamp="%s" messageID="%s" state="pass" stateMessage="OK" />`,
-		time.Now().UTC().Format("02/01/2006 15:04:05 GMT"), incomingID)
+
+	// Prevenção caso venha vazio
+	if incomingID == "" {
+		incomingID = "00000000000000000000000000000000"
+	}
+
+	// Formato exigido: dd/MM/yyyy hh:mm:ss GMT
+	timestamp := time.Now().UTC().Format("02/01/2006 15:04:05 GMT")
+
+	responseXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<stuResponseMsg xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://cody.glpconnect.com/XSD/StuResponse_Rev1_0.xsd" deliveryTimeStamp="%s" messageID="%s" correlationID="%s">
+    <state>pass</state>
+    <stateMessage>Store OK</stateMessage>
+</stuResponseMsg>`, timestamp, incomingID, incomingID)
+
+	fmt.Fprint(w, responseXML)
 }
