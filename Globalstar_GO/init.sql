@@ -57,5 +57,5 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 -- Login: admin
 -- Senha: admin (Hash gerado com custo 14)
 INSERT IGNORE INTO users (username, password_hash, role, full_name) 
-VALUES ('admin', '$2a$14$2a9.u/y/x/w/v/u/t/s/r/q/p/o/n/m/l/k/j/i/h/g/f/e/d/c/b/a', 'master', 'Administrador do Sistema');
+VALUES ('Admin-Master', '$2a$14$K92F7sZrYY1fQBUOJ2LQheymCEQcDqELgWDIe2O7cRtS6FgbEfpA.', 'master', 'Administrador do Sistema');
 -- Nota: O hash acima é ilustrativo. Se não funcionar, use o script gerar_senha.go para criar um novo hash para "admin" e substitua aqui.
