@@ -55,7 +55,8 @@ Com o Git Pull feito, basta instruir o Docker Compose a regerar as imagens do Ba
 
 Na pasta raiz onde se encontra o seu `docker-compose.yml`, execute:
 ```bash
-docker-compose up -d --build
+docker compose up -d --build
+# ou docker-compose up -d --build (em versões mais antigas do docker)
 ```
 
 **Pronto!** 
