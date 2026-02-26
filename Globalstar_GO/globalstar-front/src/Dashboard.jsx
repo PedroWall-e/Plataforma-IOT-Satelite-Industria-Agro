@@ -10,7 +10,7 @@ import AuditTab from './components/Dashboard/AuditTab';
 import UserModal from './components/Dashboard/UserModal';
 
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState('monitor'); 
+  const [activeTab, setActiveTab] = useState('monitor');
   const [messages, setMessages] = useState([]);
   const [masterData, setMasterData] = useState({ users: [], devices: [] });
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -30,36 +30,36 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!token) { navigate('/'); return; }
-    
+
     fetchMessages();
     if (role === 'master') fetchMasterData();
 
     // --- WEBSOCKET AGNOSTICO (Lê da URL do Navegador) ---
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsHost = window.location.host; // Pega o IP/Porta automaticamente
-    const wsUrl = `${wsProtocol}//${wsHost}/ws`; 
-    
+    const wsUrl = `${wsProtocol}//${wsHost}/ws`;
+
     const socket = new WebSocket(wsUrl);
 
     socket.onopen = () => console.log("WebSocket Conectado!");
 
     socket.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            if (data.type === 'DEVICE_UPDATE') {
-                setMessages(prev => prev.map(m => m.esn === data.esn ? { ...m, device_name: data.name } : m));
-                if (role === 'master') {
-                    setMasterData(prev => ({
-                        ...prev,
-                        devices: prev.devices.map(d => d.esn === data.esn ? { ...d, name: data.name } : d)
-                    }));
-                }
-            } else if (data.esn && data.payload) { 
-                setMessages(prev => [data, ...prev]);
-            }
-        } catch (err) {
-            console.error("Erro ao processar mensagem WS:", err);
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'DEVICE_UPDATE') {
+          setMessages(prev => prev.map(m => m.esn === data.esn ? { ...m, device_name: data.name } : m));
+          if (role === 'master') {
+            setMasterData(prev => ({
+              ...prev,
+              devices: prev.devices.map(d => d.esn === data.esn ? { ...d, name: data.name } : d)
+            }));
+          }
+        } else if (data.esn && data.payload) {
+          setMessages(prev => [data, ...prev]);
         }
+      } catch (err) {
+        console.error("Erro ao processar mensagem WS:", err);
+      }
     };
 
     socket.onclose = () => console.log("WebSocket Desconectado");
@@ -67,84 +67,84 @@ export default function Dashboard() {
   }, [token, role, navigate]);
 
   const fetchMessages = async () => {
-    if (editingDeviceESN) return; 
+    if (editingDeviceESN) return;
     try {
       const res = await api.get('/api/messages');
       // Trava de Segurança: Garante que é um Array
       if (Array.isArray(res.data)) setMessages(res.data);
-    } catch (error) { 
-      if (error.response?.status === 401) navigate('/'); 
+    } catch (error) {
+      if (error.response?.status === 401) navigate('/');
     }
   };
 
   const fetchMasterData = async () => {
     try {
-        const res = await api.get('/api/master/data');
-        // Trava de Segurança contra a Tela Branca: Garante que recebeu o objeto JSON esperado
-        if (res.data && typeof res.data === 'object' && !Array.isArray(res.data)) {
-            setMasterData({
-                users: Array.isArray(res.data.users) ? res.data.users : [],
-                devices: Array.isArray(res.data.devices) ? res.data.devices : []
-            });
-        }
+      const res = await api.get('/api/master/data');
+      // Trava de Segurança contra a Tela Branca: Garante que recebeu o objeto JSON esperado
+      if (res.data && typeof res.data === 'object' && !Array.isArray(res.data)) {
+        setMasterData({
+          users: Array.isArray(res.data.users) ? res.data.users : [],
+          devices: Array.isArray(res.data.devices) ? res.data.devices : []
+        });
+      }
     } catch (e) { console.error(e); }
   };
 
   const handleUserSubmit = async (e) => {
-      e.preventDefault();
-      const formData = new FormData(e.target);
-      const data = Object.fromEntries(formData.entries());
-      if (editingUser) data.id = editingUser.id;
-      if (data.id) data.id = parseInt(data.id);
-      
-      try {
-        await api.post('/api/master/user', data);
-        alert(editingUser ? 'Usuário atualizado!' : 'Usuário criado!');
-        setIsModalOpen(false);
-        fetchMasterData();
-      } catch (err) { alert("Erro ao salvar usuário"); }
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const data = Object.fromEntries(formData.entries());
+    if (editingUser) data.id = editingUser.id;
+    if (data.id) data.id = parseInt(data.id);
+
+    try {
+      await api.post('/api/master/user', data);
+      alert(editingUser ? 'Usuário atualizado!' : 'Usuário criado!');
+      setIsModalOpen(false);
+      fetchMasterData();
+    } catch (err) { alert("Erro ao salvar usuário"); }
   };
 
   const handleDeleteUser = async (id) => {
-      if(!confirm("Tem certeza que deseja excluir este usuário?")) return;
-      try {
-        await api.post('/api/master/user/delete', { id });
-        fetchMasterData();
-      } catch (err) { alert("Erro ao excluir"); }
+    if (!confirm("Tem certeza que deseja excluir este usuário?")) return;
+    try {
+      await api.post('/api/master/user/delete', { id });
+      fetchMasterData();
+    } catch (err) { alert("Erro ao excluir"); }
   };
 
   const handlePermission = async (userId, deviceId, action) => {
-      try {
-        await api.post('/api/master/permission', { user_id: parseInt(userId), device_id: parseInt(deviceId), action });
-        fetchMasterData();
-      } catch (err) { alert("Erro ao atualizar permissão"); }
+    try {
+      await api.post('/api/master/permission', { user_id: parseInt(userId), device_id: parseInt(deviceId), action });
+      fetchMasterData();
+    } catch (err) { alert("Erro ao atualizar permissão"); }
   };
 
   const saveDeviceName = async (esn) => {
-      try {
-        await api.post('/api/device/update', { esn, name: tempDeviceName });
-        setEditingDeviceESN(null);
-      } catch (err) { alert("Erro ao salvar nome do dispositivo"); }
+    try {
+      await api.post('/api/device/update', { esn, name: tempDeviceName });
+      setEditingDeviceESN(null);
+    } catch (err) { alert("Erro ao salvar nome do dispositivo"); }
   };
 
   const startEditingDevice = (esn, currentName) => {
-      setTempDeviceName(currentName || '');
-      setEditingDeviceESN(esn);
+    setTempDeviceName(currentName || '');
+    setEditingDeviceESN(esn);
   };
 
   const toggleDeviceExpand = (esn) => {
-      if (editingDeviceESN === esn) return;
-      setExpandedDevices(prev => {
-          const newSet = new Set(prev);
-          if (newSet.has(esn)) newSet.delete(esn);
-          else newSet.add(esn);
-          return newSet;
-      });
+    if (editingDeviceESN === esn) return;
+    setExpandedDevices(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(esn)) newSet.delete(esn);
+      else newSet.add(esn);
+      return newSet;
+    });
   };
 
-  const logout = () => { 
-      localStorage.clear(); 
-      navigate('/'); 
+  const logout = () => {
+    localStorage.clear();
+    navigate('/');
   };
 
   const safeMessages = Array.isArray(messages) ? messages : [];
@@ -154,48 +154,48 @@ export default function Dashboard() {
   }, {});
 
   const filteredGroups = Object.entries(allGroups).filter(([esn, msgs]) => {
-      if (monitorSearch) {
-        const term = monitorSearch.toLowerCase();
-        const name = msgs[0].device_name || '';
-        const matchesText = name.toLowerCase().includes(term) || esn.toLowerCase().includes(term) || msgs.some(m => m.payload.toLowerCase().includes(term));
-        if (!matchesText) return false;
-      }
-      return monitorSubTab === 'SATELITE-DG'; 
+    if (monitorSearch) {
+      const term = monitorSearch.toLowerCase();
+      const name = msgs[0].device_name || '';
+      const matchesText = name.toLowerCase().includes(term) || esn.toLowerCase().includes(term) || msgs.some(m => m.payload.toLowerCase().includes(term));
+      if (!matchesText) return false;
+    }
+    return monitorSubTab === 'SATELITE-DG';
   });
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans flex flex-col">
       <div className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-30">
-          <div className="max-w-7xl mx-auto px-4 h-16 flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                  <div className="bg-blue-600 p-2 rounded-lg text-white"><Smartphone size={20} /></div>
-                  <div>
-                    <h1 className="text-lg font-bold text-gray-900 leading-tight">Data Frontier</h1>
-                    <p className="text-[10px] text-gray-500 font-medium tracking-wider">IOT CONTROL PANEL</p>
-                  </div>
-              </div>
-              <div className="flex items-center gap-4">
-                  {(role === 'master' || role === 'support') && (
-                      <nav className="flex bg-gray-100 p-1 rounded-lg">
-                          <button onClick={() => setActiveTab('monitor')} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'monitor' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-900'}`}>Monitor</button>
-                          {role === 'master' && (
-                              <>
-                                  <button onClick={() => setActiveTab('users')} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'users' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-900'}`}>Usuários</button>
-                                  <button onClick={() => setActiveTab('links')} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'links' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-900'}`}>Vínculos</button>
-                              </>
-                          )}
-                          <button onClick={() => setActiveTab('audit')} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'audit' ? 'bg-white shadow text-purple-600' : 'text-gray-500 hover:text-gray-900'}`}>Auditoria</button>
-                      </nav>
-                  )}
-                  <div className="flex items-center gap-3 pl-4 border-l">
-                      <div className="text-right hidden sm:block">
-                          <p className="text-sm font-bold text-gray-700">{fullName}</p>
-                          <p className="text-xs text-gray-400 capitalize">{role}</p>
-                      </div>
-                      <button onClick={logout} className="text-red-500 hover:bg-red-50 p-2 rounded-full transition" title="Sair"><XCircle size={20}/></button>
-                  </div>
-              </div>
+        <div className="max-w-7xl mx-auto px-4 h-16 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-600 p-2 rounded-lg text-white"><Smartphone size={20} /></div>
+            <div>
+              <h1 className="text-lg font-bold text-gray-900 leading-tight">IoTData Cloud</h1>
+              <p className="text-[10px] text-gray-500 font-medium tracking-wider">BY DATA FRONTIER</p>
+            </div>
           </div>
+          <div className="flex items-center gap-4">
+            {(role === 'master' || role === 'support') && (
+              <nav className="flex bg-gray-100 p-1 rounded-lg">
+                <button onClick={() => setActiveTab('monitor')} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'monitor' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-900'}`}>Monitor</button>
+                {role === 'master' && (
+                  <>
+                    <button onClick={() => setActiveTab('users')} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'users' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-900'}`}>Usuários</button>
+                    <button onClick={() => setActiveTab('links')} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'links' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-900'}`}>Vínculos</button>
+                  </>
+                )}
+                <button onClick={() => setActiveTab('audit')} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'audit' ? 'bg-white shadow text-purple-600' : 'text-gray-500 hover:text-gray-900'}`}>Auditoria</button>
+              </nav>
+            )}
+            <div className="flex items-center gap-3 pl-4 border-l">
+              <div className="text-right hidden sm:block">
+                <p className="text-sm font-bold text-gray-700">{fullName}</p>
+                <p className="text-xs text-gray-400 capitalize">{role}</p>
+              </div>
+              <button onClick={logout} className="text-red-500 hover:bg-red-50 p-2 rounded-full transition" title="Sair"><XCircle size={20} /></button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="flex-1 max-w-7xl mx-auto w-full p-6">

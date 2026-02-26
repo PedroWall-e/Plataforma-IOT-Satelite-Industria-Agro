@@ -1,0 +1,274 @@
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+    Satellite, Droplets, ShieldAlert, TrendingUp,
+    CheckCircle, Radio, Sprout, ArrowRight, BarChart3,
+    FileCheck, ShieldCheck, Phone
+} from 'lucide-react';
+import Footer from './components/Footer';
+
+export default function LandingPageIgam() {
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const navigate = useNavigate();
+
+    return (
+        <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
+
+            {/* HEADER */}
+            <header className="fixed w-full top-0 bg-white/90 backdrop-blur-md z-50 border-b border-slate-200 shadow-sm">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+                    <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/')}>
+                        <div className="bg-blue-600 p-2 rounded-lg text-white shadow-md">
+                            <Satellite size={24} />
+                        </div>
+                        <div>
+                            <h1 className="text-xl font-bold text-slate-900 leading-tight">IoTData Cloud</h1>
+                            <p className="text-[10px] font-semibold text-blue-600 uppercase tracking-widest">by Data Frontier</p>
+                        </div>
+                    </div>
+
+                    <nav className="hidden md:flex gap-8 text-sm font-medium text-slate-600">
+                        <a href="#o-problema" className="hover:text-blue-600 transition">O Desafio IGAM</a>
+                        <a href="#solucao" className="hover:text-blue-600 transition">Nossa Solução</a>
+                        <a href="#beneficios" className="hover:text-blue-600 transition">Além da Telemetria</a>
+                    </nav>
+
+                    <div className="hidden md:flex items-center gap-4">
+                        <button onClick={() => navigate('/login')} className="text-sm font-bold text-slate-600 hover:text-blue-600 transition">
+                            Acesso
+                        </button>
+                        <a href="#contato" className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-bold shadow-lg shadow-blue-200 transition transform hover:-translate-y-0.5">
+                            Falar com Especialista
+                        </a>
+                    </div>
+                </div>
+            </header>
+
+            {/* HERO SECTION */}
+            <section className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden bg-slate-900">
+                <div className="absolute inset-0 z-0 opacity-40">
+                    <div className="w-full h-full bg-cover bg-center" style={{ backgroundImage: "url('')" }}></div>
+                    <div className="absolute inset-0 bg-gradient-to-r from-slate-900 via-slate-900/90 to-blue-900/80"></div>
+                </div>
+
+                <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center md:text-left flex flex-col md:flex-row items-center gap-12">
+                    <div className="md:w-3/5">
+                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/20 text-red-300 font-semibold text-xs border border-red-500/30 mb-6 backdrop-blur-sm">
+                            <ShieldAlert size={14} />
+                            <span>Atenção: Portaria IGAM 12/2023 em Vigor</span>
+                        </div>
+                        <h1 className="text-4xl md:text-5xl lg:text-6xl font-extrabold text-white leading-tight mb-6">
+                            Sua outorga de água <br /><span className="text-blue-400">não pode depender</span> do sinal de celular.
+                        </h1>
+                        <p className="text-lg md:text-xl text-slate-300 mb-8 max-w-2xl">
+                            Evite multas e o embargo das suas bombas. Transmita os dados de vazão em tempo real para o sistema MIRA do IGAM através da nossa tecnologia de <strong className="text-white">Telemetria Via Satélite</strong>.
+                        </p>
+                        <div className="flex flex-col sm:flex-row gap-4 justify-center md:justify-start">
+                            <a href="#contato" className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 shadow-xl shadow-blue-900/50 transition">
+                                Proteger Minha Safra <ArrowRight size={20} />
+                            </a>
+                            <a href="#como-funciona" className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-8 py-4 rounded-xl font-bold text-lg flex items-center justify-center transition backdrop-blur-md">
+                                Entender a Solução
+                            </a>
+                        </div>
+                    </div>
+
+                    <div className="md:w-2/5 hidden md:block">
+                        <div className="bg-white p-2 rounded-2xl shadow-2xl transform rotate-2 hover:rotate-0 transition duration-500">
+                            <div className="bg-slate-100 rounded-xl overflow-hidden border border-slate-200 aspect-[4/3] flex items-center justify-center text-slate-400 relative">
+                                <span className="absolute top-2 right-2 flex h-3 w-3">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            {/* PROBLEM SECTION */}
+            <section id="o-problema" className="py-20 bg-white">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div className="text-center max-w-3xl mx-auto mb-16">
+                        <h2 className="text-3xl font-bold text-slate-900 mb-4">A era da planilha de papel acabou.</h2>
+                        <p className="text-lg text-slate-600">
+                            O agronegócio de alta performance exige gestão em tempo real. Com as bacias hídricas em estresse, a fiscalização do IGAM mudou as regras do jogo.
+                        </p>
+                    </div>
+
+                    <div className="grid md:grid-cols-3 gap-8">
+                        <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100">
+                            <div className="w-12 h-12 bg-red-100 text-red-600 rounded-xl flex items-center justify-center mb-6">
+                                <FileCheck size={24} />
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-900 mb-3">Obrigação Legal</h3>
+                            <p className="text-slate-600">A integração ao sistema <strong>MIRA</strong> exige o fim dos horímetros simples. A transmissão telemétrica ininterrupta agora é mandatória para evitar Áreas de Conflito (DAC).</p>
+                        </div>
+
+                        <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100">
+                            <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center mb-6">
+                                <Radio size={24} />
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-900 mb-3">O Apagão de Sinal</h3>
+                            <p className="text-slate-600">A infraestrutura "porteira para-fora" é falha. Não há sinal 3G/4G confiável perto das captações e nos fundos de vale onde as bombas operam.</p>
+                        </div>
+
+                        <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100">
+                            <div className="w-12 h-12 bg-slate-800 text-white rounded-xl flex items-center justify-center mb-6">
+                                <ShieldAlert size={24} />
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-900 mb-3">Risco Operacional</h3>
+                            <p className="text-slate-600">Sem transmissão de dados, você sofre sanções e o lacre das bombas. No pico da irrigação da cafeicultura, ficar sem água é sinônimo de prejuízo milionário.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            {/* SOLUTION SECTION */}
+            <section id="solucao" className="py-20 bg-blue-600 text-white">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div className="flex flex-col lg:flex-row items-center gap-16">
+                        <div className="lg:w-1/2">
+                            <h2 className="text-3xl font-bold mb-6">Conectividade Orbital Direta para o Agronegócio.</h2>
+                            <p className="text-blue-100 text-lg mb-8">
+                                A plataforma <strong>IoTData Cloud by Data Frontier</strong> resolve o gargalo estrutural conectando medidores ultrassônicos diretamente à nossa nuvem via constelação de satélites Globalstar, e integrando 100% via API com os servidores do IGAM.
+                            </p>
+
+                            <ul className="space-y-5 mb-8">
+                                <li className="flex items-start gap-3">
+                                    <CheckCircle className="text-green-400 shrink-0 mt-1" />
+                                    <span><strong>Hardware Blindado:</strong> Dataloggers IP67/IP68 resistentes a sol abrasador e umidade, com alimentação solar autônoma.</span>
+                                </li>
+                                <li className="flex items-start gap-3">
+                                    <CheckCircle className="text-green-400 shrink-0 mt-1" />
+                                    <span><strong>Independente de Operadoras:</strong> Funciona em qualquer grota, vale ou planalto do Cerrado Mineiro, sem precisar de torres de telefonia.</span>
+                                </li>
+                                <li className="flex items-start gap-3">
+                                    <CheckCircle className="text-green-400 shrink-0 mt-1" />
+                                    <span><strong>Integração MIRA/IGAM Nativa:</strong> Nossa API já transmite a volumetria nos exatos padrões e algoritmos exigidos pelo Estado.</span>
+                                </li>
+                                <li className="flex items-start gap-3">
+                                    <CheckCircle className="text-green-400 shrink-0 mt-1" />
+                                    <span><strong>Emissão de ART:</strong> Projetos acompanhados por engenheiros habilitados no CREA, garantindo a segurança jurídica da sua fazenda.</span>
+                                </li>
+                            </ul>
+                        </div>
+
+                        <div className="lg:w-1/2 w-full">
+                            {/* PLATFORM PREVIEW */}
+                            <div className="bg-slate-900 rounded-2xl shadow-2xl p-4 border border-slate-700 cursor-pointer hover:shadow-blue-500/20 transition-all duration-300" onClick={() => navigate('/login')}>
+                                <div className="flex items-center gap-2 mb-4">
+                                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                                    <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                    <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                                    <div className="ml-2 text-xs text-slate-400 font-mono">app.datafrontier.com.br/dashboard</div>
+                                </div>
+                                <div className="bg-slate-800 rounded-xl overflow-hidden aspect-video relative flex items-center justify-center">
+                                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900 to-transparent z-10"></div>
+                                    <div className="w-full h-full p-4">
+                                        {/* Fake Dashboard UI */}
+                                        <div className="flex justify-between items-center mb-4 border-b border-slate-700 pb-2">
+                                            <span className="text-white font-bold text-sm">Monitor de Telemetria</span>
+                                            <span className="bg-green-500/20 text-green-400 text-xs px-2 py-1 rounded">API IGAM: Online</span>
+                                        </div>
+                                        <div className="space-y-3">
+                                            <div className="bg-slate-700/50 p-3 rounded text-xs text-slate-300 font-mono flex justify-between">
+                                                <span>ESN: 0-213455 (Bomba Pivô 01)</span>
+                                                <span className="text-blue-400">Vazão: 145 m³/h</span>
+                                            </div>
+                                            <div className="bg-slate-700/50 p-3 rounded text-xs text-slate-300 font-mono flex justify-between">
+                                                <span>ESN: 0-883211 (Poço Artesiano Sul)</span>
+                                                <span className="text-blue-400">Vazão: 60 m³/h</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="absolute bottom-4 left-0 right-0 text-center z-20">
+                                        <span className="inline-block bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg">
+                                            Acessar Plataforma Web
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            {/* UPSELL / BEYOND COMPLIANCE SECTION */}
+            <section id="beneficios" className="py-20 bg-slate-50">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div className="text-center max-w-3xl mx-auto mb-16">
+                        <h2 className="text-3xl font-bold text-slate-900 mb-4">Transforme um custo burocrático em Retorno sobre Investimento.</h2>
+                        <p className="text-lg text-slate-600">
+                            A antena satelital que você adquire para cumprir a lei do IGAM atua como um "Cavalo de Troia" da Agricultura 4.0. Aproveite a infraestrutura para conectar toda a sua fazenda.
+                        </p>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition">
+                            <Droplets className="text-blue-600 mb-4" size={32} />
+                            <h4 className="font-bold text-slate-900 mb-2">Manejo Nutricional Fino</h4>
+                            <p className="text-sm text-slate-600">Economize energia e defensivos operando bombeamentos apenas quando estritamente necessário.</p>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition">
+                            <Sprout className="text-green-600 mb-4" size={32} />
+                            <h4 className="font-bold text-slate-900 mb-2">Inversão da Bienalidade</h4>
+                            <p className="text-sm text-slate-600">Garanta água constante e controlada na florada do café, sustentando curvas de alta produtividade.</p>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition">
+                            <BarChart3 className="text-purple-600 mb-4" size={32} />
+                            <h4 className="font-bold text-slate-900 mb-2">Estações Meteorológicas</h4>
+                            <p className="text-sm text-slate-600">Plugue sensores de chuva e umidade do solo à mesma antena instalada na bomba d'água, com custo marginal zero.</p>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition">
+                            <ShieldCheck className="text-emerald-600 mb-4" size={32} />
+                            <h4 className="font-bold text-slate-900 mb-2">ESG e Créditos Verdes</h4>
+                            <p className="text-sm text-slate-600">Atenda consórcios europeus com dados auditáveis em Blockchain. Valorize o selo do seu grão exportado.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            {/* CTA SECTION */}
+            <section id="contato" className="py-24 bg-slate-900 relative overflow-hidden">
+                <div className="absolute top-0 right-0 -mt-20 -mr-20 w-80 h-80 bg-blue-600 rounded-full blur-3xl opacity-20"></div>
+                <div className="absolute bottom-0 left-0 -mb-20 -ml-20 w-80 h-80 bg-green-600 rounded-full blur-3xl opacity-20"></div>
+
+                <div className="relative z-10 max-w-4xl mx-auto px-4 text-center">
+                    <h2 className="text-3xl md:text-5xl font-extrabold text-white mb-6">
+                        Não espere a Área de Conflito (DAC) ser decretada.
+                    </h2>
+                    <p className="text-xl text-slate-300 mb-10">
+                        A regularização leva tempo e a aquisição de equipamentos está em alta demanda. Fale com nossos engenheiros e garanta sua conectividade satelital hoje.
+                    </p>
+
+                    <div className="bg-white p-8 rounded-3xl shadow-2xl text-left max-w-md mx-auto">
+                        <form className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Nome / Fazenda</label>
+                                <input type="text" className="w-full border border-slate-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-600 outline-none" placeholder="Ex: Fazenda Boa Vista" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">WhatsApp</label>
+                                <input type="tel" className="w-full border border-slate-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-600 outline-none" placeholder="(34) 90000-0000" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Quantidade de Bombas/Poços</label>
+                                <select className="w-full border border-slate-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-600 outline-none bg-white">
+                                    <option>1 a 5 captações</option>
+                                    <option>6 a 20 captações</option>
+                                    <option>Mais de 20 captações</option>
+                                </select>
+                            </div>
+                            <button type="button" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg mt-2 flex items-center justify-center gap-2 transition">
+                                Solicitar Orçamento <ArrowRight size={18} />
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <Footer />
+        </div>
+    );
+}

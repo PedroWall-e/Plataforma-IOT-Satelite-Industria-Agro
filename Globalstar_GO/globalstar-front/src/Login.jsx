@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, Lock, Wifi, ArrowRight, Loader2 } from 'lucide-react';
-import api from './services/api'; // Importando o serviço de API configurado
+import api from './services/api';
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -19,15 +19,15 @@ export default function Login() {
       // Usamos api.post em vez de axios.post
       // Não precisamos passar a URL completa, apenas o endpoint '/login'
       const res = await api.post('/login', { username, password });
-      
+
       // Salva os dados de sessão
       localStorage.setItem('token', res.data.token);
       localStorage.setItem('role', res.data.role);
       localStorage.setItem('user', res.data.username);
       if (res.data.full_name) {
-          localStorage.setItem('full_name', res.data.full_name);
+        localStorage.setItem('full_name', res.data.full_name);
       }
-      
+
       navigate('/dashboard');
     } catch (err) {
       // O tratamento de erro permanece similar, mas agora usamos o objeto de erro do axios
@@ -44,10 +44,10 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 font-sans">
-      
+
       {/* Container Principal (Card) */}
       <div className="bg-white p-8 md:p-10 rounded-3xl shadow-2xl w-full max-w-sm border border-gray-200 relative overflow-hidden">
-        
+
         {/* Elemento decorativo de fundo (Círculo sutil) */}
         <div className="absolute -top-10 -right-10 w-32 h-32 bg-blue-100 rounded-full blur-3xl opacity-50"></div>
         <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-blue-100 rounded-full blur-3xl opacity-50"></div>
@@ -57,13 +57,13 @@ export default function Login() {
           <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg transform rotate-3 hover:rotate-0 transition-all duration-300">
             <Wifi className="text-white w-8 h-8" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-800 tracking-tight">Data Frontier</h1>
-          <h2 className="text-sm font-semibold text-blue-600 uppercase tracking-widest mt-1">IOT PAINEL</h2>
+          <h1 className="text-2xl font-bold text-gray-800 tracking-tight">IoTData Cloud</h1>
+          <h2 className="text-sm font-semibold text-blue-600 uppercase tracking-widest mt-1">by Data Frontier</h2>
         </div>
 
         {/* Formulário */}
         <form onSubmit={handleLogin} className="space-y-5 relative z-10">
-          
+
           {/* Mensagem de Erro */}
           {error && (
             <div className="bg-red-50 text-red-600 text-xs font-medium p-3 rounded-lg border border-red-100 animate-pulse text-center">
@@ -122,7 +122,7 @@ export default function Login() {
         <div className="mt-8 text-center relative z-10">
           <a
             href="#"
-            onClick={(e) => { e.preventDefault(); alert("Entre em contato com o administrador master para redefinir sua senha."); }}
+            onClick={(e) => { e.preventDefault(); navigate("/forgot-password"); }}
             className="text-sm text-gray-400 hover:text-blue-600 transition-colors duration-200 font-medium"
           >
             Esqueci minha senha
@@ -131,7 +131,7 @@ export default function Login() {
 
         {/* Rodapé da Empresa */}
         <div className="mt-6 border-t border-gray-100 pt-4 text-center">
-             <p className="text-xs text-gray-300">© 2026 Data Frontier Systems</p>
+          <p className="text-xs text-gray-300">© 2026 IoTData Cloud by Data Frontier Systems</p>
         </div>
 
       </div>

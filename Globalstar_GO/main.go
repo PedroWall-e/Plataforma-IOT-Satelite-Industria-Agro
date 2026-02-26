@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/smtp"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
 	"github.com/rs/cors"
@@ -120,6 +122,20 @@ func initDB() {
 		log.Fatal("MySQL Offline:", err)
 	}
 	fmt.Println("Conectado ao MySQL!")
+
+	// Criar tabela de recuperação de senha se não existir
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS password_resets (
+			id INT AUTO_INCREMENT PRIMARY KEY,
+			email VARCHAR(255) NOT NULL,
+			token VARCHAR(255) NOT NULL UNIQUE,
+			expires_at DATETIME NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		log.Printf("Aviso: Falha ao criar tabela password_resets: %v", err)
+	}
 }
 
 // --- WEBSOCKET HANDLERS ---
@@ -199,6 +215,120 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"token": tokenString, "role": role, "username": creds.Username, "full_name": fullName,
 	})
+}
+
+// --- RECUPERAÇÃO DE SENHA ---
+func forgotPasswordHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var req struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
+
+	var userID int
+	var email string
+	// Tentar achar por username ou email
+	err := db.QueryRow("SELECT id, email FROM users WHERE username = ? OR email = ?", req.Username, req.Username).Scan(&userID, &email)
+	if err != nil || email == "" {
+		// Retornar OK de qualquer jeito para não expor a existência (ou falta) do usuário
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	token := uuid.New().String()
+	expiresAt := time.Now().Add(1 * time.Hour)
+
+	_, err = db.Exec("INSERT INTO password_resets (email, token, expires_at) VALUES (?, ?, ?)", email, token, expiresAt)
+	if err != nil {
+		log.Printf("Erro ao salvar reset token: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Enviar e-mail
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpPort := os.Getenv("SMTP_PORT")
+	smtpUser := os.Getenv("SMTP_USER")
+	smtpPass := os.Getenv("SMTP_PASS")
+	smtpFrom := os.Getenv("SMTP_FROM")
+	frontURL := os.Getenv("FRONTEND_URL") // Ex: http://localhost:5173 ou https://meusite.com
+
+	if smtpHost != "" && smtpPort != "" {
+		auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
+
+		resetLink := fmt.Sprintf("%s/reset-password?token=%s", frontURL, token)
+		subject := "Subject: Redefinir sua senha - Data Frontier\r\n"
+		mime := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\n\n"
+
+		body := fmt.Sprintf(`<html><body>
+			<h2>Data Frontier - Recuperação de Senha</h2>
+			<p>Você solicitou a redefinição da sua senha.</p>
+			<p>Clique no link abaixo para criar uma nova senha:</p>
+			<p><a href="%s" style="background-color: #2563EB; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Redefinir Senha</a></p>
+			<p>Se você não solicitou isso, ignore este e-mail. Este link expira em 1 hora.</p>
+		</body></html>`, resetLink)
+
+		msg := []byte(subject + mime + body)
+		err := smtp.SendMail(smtpHost+":"+smtpPort, auth, smtpFrom, []string{email}, msg)
+		if err != nil {
+			log.Printf("Aviso: Falha ao enviar e-mail de recuperação: %v", err)
+		}
+	} else {
+		log.Printf("Aviso: SMTP não configurado. Token gerado para %s: %s", email, token)
+	}
+
+	createAuditLog(userID, req.Username, "FORGOT_PASSWORD", "Solicitação de redefinição de senha", r.RemoteAddr)
+	w.WriteHeader(http.StatusOK)
+}
+
+func resetPasswordHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var req struct {
+		Token       string `json:"token"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
+
+	var email string
+	var expiresAt time.Time
+	err := db.QueryRow("SELECT email, expires_at FROM password_resets WHERE token = ?", req.Token).Scan(&email, &expiresAt)
+	if err != nil {
+		http.Error(w, "Token inválido", http.StatusBadRequest)
+		return
+	}
+
+	if time.Now().After(expiresAt) {
+		http.Error(w, "Token expirado", http.StatusBadRequest)
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 14)
+	if err != nil {
+		http.Error(w, "Erro ao criptografar senha", http.StatusInternalServerError)
+		return
+	}
+
+	_, err = db.Exec("UPDATE users SET password_hash = ? WHERE email = ?", hash, email)
+	if err != nil {
+		http.Error(w, "Erro ao atualizar senha", http.StatusInternalServerError)
+		return
+	}
+
+	// Deletar o token usado
+	db.Exec("DELETE FROM password_resets WHERE token = ?", req.Token)
+	db.Exec("DELETE FROM password_resets WHERE email = ?", email) // Limpa tokens antigos do usuario
+
+	var userID int
+	db.QueryRow("SELECT id FROM users WHERE email = ?", email).Scan(&userID)
+	createAuditLog(userID, email, "RESET_PASSWORD", "Senha redefinida via link de recuperação", r.RemoteAddr)
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func apiMessagesHandler(w http.ResponseWriter, r *http.Request) {
@@ -488,6 +618,8 @@ func main() {
 
 	// Rotas
 	mux.HandleFunc("/login", loginHandler)
+	mux.HandleFunc("/api/forgot-password", forgotPasswordHandler)
+	mux.HandleFunc("/api/reset-password", resetPasswordHandler)
 	mux.HandleFunc("/globalstar/listener", gsService.StreamHandler)
 	mux.HandleFunc("/ws", handleConnections) // Endpoint WebSocket
 
